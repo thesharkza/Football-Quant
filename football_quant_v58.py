@@ -11,8 +11,8 @@ Football Quant V5.8 (Advanced Volatility, Trap Shield & Class Superiority Editio
   3) learn   : รันการค้นหา Rule ใหม่จากประวัติทั้งหมดอีกครั้ง
   4) stats   : ดูผลงาน, ROI, น้ำหนักของแต่ละ Rule, Rule ที่ระบบสร้างเอง
   5) template: พิมพ์ไฟล์ JSON ตัวอย่างสำหรับกรอกข้อมูลแมตช์
-  6) images  : นำเข้ารูปภาพ 5 รูป -> Claude Vision สกัดค่าราคา/H2H/สถิติ -> ตรวจสอบ -> วิเคราะห์
-               (ต้องตั้ง ANTHROPIC_API_KEY)
+  6) images  : นำเข้ารูปภาพ 5 รูป -> Gemini (gemini-3.7-flash) สกัดค่าราคา/H2H/สถิติ -> ตรวจสอบ -> วิเคราะห์
+               (ต้องตั้ง GEMINI_API_KEY)
 
 ใช้ไลบรารีมาตรฐานของ Python เท่านั้น (ไม่ต้องติดตั้งอะไรเพิ่ม)
 
@@ -853,7 +853,9 @@ def cmd_analyze(a):
 # 9.1) นำเข้ารูปภาพ (5 รูป) -> สกัดข้อมูลด้วย Claude Vision -> ตรวจสอบ -> วิเคราะห์
 # ----------------------------------------------------------------------------
 API_URL = "https://api.anthropic.com/v1/messages"
-DEFAULT_MODEL = "gemini-3.7-flash"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+DEFAULT_MODEL = "gemini-3.7-flash"          # ใช้ Gemini เป็นค่าเริ่มต้น (ชื่อที่ขึ้นต้นด้วย gemini)
+CLAUDE_MODEL = "claude-sonnet-5-5"          # ถ้าใส่ชื่อโมเดล claude-* จะเรียก Anthropic แทน
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".webp": "image/webp", ".gif": "image/gif"}
 
@@ -942,33 +944,73 @@ def consolidate_books(m):
     return w
 
 
-def extract_from_images(paths, model, api_key):
-    content = []
-    for i, p in enumerate(paths, 1):
+def is_gemini(model):
+    return str(model).lower().startswith("gemini")
+
+
+def api_key_for(model, getter):
+    """getter(name) -> ค่า secret/env ; คืนคีย์ที่เหมาะกับผู้ให้บริการของโมเดล"""
+    if is_gemini(model):
+        return getter("GEMINI_API_KEY") or getter("GOOGLE_API_KEY")
+    return getter("ANTHROPIC_API_KEY")
+
+
+def _load_images(paths):
+    out = []
+    for p in paths:
         ext = os.path.splitext(p)[1].lower()
         if ext not in MEDIA_TYPES:
             sys.exit(f"ไม่รองรับไฟล์ {p} (รองรับ: {', '.join(MEDIA_TYPES)})")
         if not os.path.exists(p):
             sys.exit(f"ไม่พบไฟล์ {p}")
-        raw = open(p, "rb").read()
+        with open(p, "rb") as fh:
+            raw = fh.read()
         if len(raw) > 5 * 1024 * 1024:
             sys.exit(f"{p} ใหญ่เกิน 5MB กรุณาย่อรูปก่อน")
-        content.append({"type": "text", "text": f"รูปที่ {i}: {os.path.basename(p)}"})
-        content.append({"type": "image", "source": {"type": "base64", "media_type": MEDIA_TYPES[ext],
-                                                    "data": base64.b64encode(raw).decode()}})
-    schema = EXTRACT_SCHEMA
-    content.append({"type": "text", "text": EXTRACT_PROMPT + json.dumps(schema, ensure_ascii=False, indent=1)})
-    body = json.dumps({"model": model, "max_tokens": 3000,
-                       "messages": [{"role": "user", "content": content}]}).encode("utf-8")
-    req = urllib.request.Request(API_URL, data=body, headers={
-        "content-type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"})
+        out.append((os.path.basename(p), MEDIA_TYPES[ext], base64.b64encode(raw).decode()))
+    return out
+
+
+def _post_json(url, headers, payload):
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=180) as resp:
-            data = json.load(resp)
+            return json.load(resp)
     except urllib.error.HTTPError as e:
         sys.exit(f"API error {e.code}: {e.read().decode('utf-8', 'ignore')[:500]}")
     except urllib.error.URLError as e:
         sys.exit(f"เชื่อมต่อ API ไม่ได้: {e.reason}")
+
+
+def extract_from_images(paths, model, api_key):
+    """อ่านรูปด้วย Gemini (ชื่อโมเดลขึ้นต้น gemini) หรือ Claude แล้วคืน dict ข้อมูลแมตช์"""
+    imgs = _load_images(paths)
+    task = EXTRACT_PROMPT + json.dumps(EXTRACT_SCHEMA, ensure_ascii=False, indent=1)
+    if is_gemini(model):
+        parts = []
+        for i, (name, mt, b64) in enumerate(imgs, 1):
+            parts.append({"text": f"รูปที่ {i}: {name}"})
+            parts.append({"inline_data": {"mime_type": mt, "data": b64}})
+        parts.append({"text": task})
+        data = _post_json(GEMINI_URL.format(model=model),
+                          {"content-type": "application/json", "x-goog-api-key": api_key},
+                          {"contents": [{"role": "user", "parts": parts}],
+                           "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 8192}})
+        cands = data.get("candidates") or []
+        if not cands:
+            fb = data.get("promptFeedback", {})
+            sys.exit(f"Gemini ไม่ส่งผลลัพธ์กลับมา: {json.dumps(fb, ensure_ascii=False)[:300] or 'ไม่ทราบสาเหตุ'}")
+        text = "".join(pt.get("text", "") for pt in cands[0].get("content", {}).get("parts", [])
+                       if not pt.get("thought"))
+        return parse_json_reply(text)
+    content = []
+    for i, (name, mt, b64) in enumerate(imgs, 1):
+        content.append({"type": "text", "text": f"รูปที่ {i}: {name}"})
+        content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": b64}})
+    content.append({"type": "text", "text": task})
+    data = _post_json(API_URL, {"content-type": "application/json", "x-api-key": api_key,
+                                "anthropic-version": "2023-06-01"},
+                      {"model": model, "max_tokens": 3000, "messages": [{"role": "user", "content": content}]})
     text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
     return parse_json_reply(text)
 
@@ -1044,11 +1086,13 @@ def validate_match(m):
 
 
 def cmd_images(a):
-    key = os.environ.get("ANTHROPIC_API_KEY")
+    key = api_key_for(a.model, os.environ.get)
     if not key:
-        sys.exit("ต้องตั้งค่า environment variable ANTHROPIC_API_KEY ก่อน\n"
-                 "  macOS/Linux: export ANTHROPIC_API_KEY=sk-ant-...\n"
-                 "  Windows PS : $env:ANTHROPIC_API_KEY='sk-ant-...'")
+        if is_gemini(a.model):
+            sys.exit("ต้องตั้งค่า environment variable GEMINI_API_KEY ก่อน (สร้างที่ https://aistudio.google.com/apikey)\n"
+                     "  macOS/Linux: export GEMINI_API_KEY=...\n"
+                     "  Windows PS : $env:GEMINI_API_KEY='...'")
+        sys.exit("ต้องตั้งค่า environment variable ANTHROPIC_API_KEY ก่อน")
     if len(a.images) != 5:
         print(f"⚠ ได้รับ {len(a.images)} รูป (ปกติใช้ 5 รูป) จะดำเนินการต่อ")
     print(f"🖼  กำลังอ่าน {len(a.images)} รูปด้วย {a.model} ...")
@@ -1189,7 +1233,7 @@ def main():
     p.add_argument("input")
     p.add_argument("--no-save", action="store_true")
     p.set_defaults(fn=cmd_analyze)
-    p = sp.add_parser("images", help="อ่านรูป 5 รูปด้วย Claude Vision แล้ววิเคราะห์ (ต้องมี ANTHROPIC_API_KEY)")
+    p = sp.add_parser("images", help="อ่านรูป 5 รูปด้วย Gemini/Claude แล้ววิเคราะห์ (ต้องมี GEMINI_API_KEY หรือ ANTHROPIC_API_KEY)")
     p.add_argument("images", nargs="+", help="ไฟล์รูป png/jpg/webp (ปกติ 5 รูป)")
     p.add_argument("--model", default=os.environ.get("QUANT_MODEL", DEFAULT_MODEL))
     p.add_argument("--match-id")
