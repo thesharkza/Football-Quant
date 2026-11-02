@@ -57,15 +57,13 @@ if _pw and not st.session_state.get("auth"):
 # ---------------------------------------------------------------- Sidebar
 with st.sidebar:
     st.header("⚙ ตั้งค่า")
-    model = st.text_input("โมเดลอ่านรูป", value=os.environ.get("QUANT_MODEL", q.DEFAULT_MODEL),
-                          help="ขึ้นต้น gemini → ใช้ GEMINI_API_KEY | ขึ้นต้น claude → ใช้ ANTHROPIC_API_KEY")
-    _kname = "GEMINI_API_KEY" if q.is_gemini(model) else "ANTHROPIC_API_KEY"
-    api_key = q.api_key_for(model, secret) or st.text_input(_kname, type="password",
-                                                            help="ใช้อ่านรูปเท่านั้น ไม่ถูกบันทึก")
+    model = st.text_input("โมเดลอ่านรูป (Gemini)", value=os.environ.get("QUANT_MODEL", q.DEFAULT_MODEL))
+    api_key = q.get_api_key(secret) or st.text_input("GEMINI_API_KEY", type="password",
+                                                     help="ใช้อ่านรูปเท่านั้น ไม่ถูกบันทึก")
     with st.expander("🔎 ตรวจ Secrets"):
         names = sorted(_all_secrets().keys())
         st.write("ชื่อตัวแปรที่แอปอ่านเจอ:", ", ".join(names) if names else "— ไม่พบเลย —")
-        for _n in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "APP_PASSWORD"):
+        for _n in ("GEMINI_API_KEY", "APP_PASSWORD"):
             st.write(("✅ " if secret(_n) else "❌ ") + _n)
         st.caption("ถ้าเป็น ❌ ทั้งที่ใส่แล้ว: ตรวจการสะกดชื่อ, ค่าต้องอยู่ในเครื่องหมายคำพูด \"...\" "
                    "และกด Save ที่หน้า Secrets แล้วรอแอปรีสตาร์ท")
@@ -90,7 +88,7 @@ with tab1:
     st.subheader("1) อ่านรูปตารางราคา (ปกติ 5 รูป)")
     files = st.file_uploader("ภาพสรุปแมตช์/ฟอร์ม, 1X2, Handicap, Over/Under, H2H",
                              type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True)
-    if st.button("🖼 อ่านรูปด้วย AI", disabled=not files):
+    if st.button("🖼 อ่านรูปด้วย Gemini", disabled=not files):
         if not api_key:
             st.error("ต้องใส่ API key ของโมเดลที่เลือก (Secrets หรือช่องใน Sidebar)")
         else:
@@ -178,6 +176,12 @@ with tab2:
         c1, c2 = st.columns(2)
         hg = c1.number_input(f"ประตู {rec['features']['home']} (เหย้า)", 0, 30, 0)
         ag = c2.number_input(f"ประตู {rec['features']['away']} (เยือน)", 0, 30, 0)
+        with st.expander("🗑 ลบรายการที่รอผล (ถ้าไม่ต้องการ)"):
+            sure = st.checkbox("ยืนยันลบรายการที่เลือกอยู่", key=f"del_{rid}")
+            if st.button("ลบรายการนี้", disabled=not sure):
+                q.delete_records(store, [rid])
+                st.success("ลบแล้ว")
+                st.rerun()
         if st.button("✅ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
             outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
             (st.success if r > 0 else st.error if r < 0 else st.info)(
@@ -233,6 +237,17 @@ with tab3:
                    "สกอร์": "-".join(map(str, r.get("score", []))) or "-",
                    "ผล": q.result_word(r["pick_r"]) if r["status"] == "settled" else "-",
                    "กำไร": r.get("pick_profit", "")} for r in reversed(store.history)])
+
+    with st.expander("🗑 ลบรายการในประวัติ"):
+        opts = {r["id"]: f"{r['features']['home']} vs {r['features']['away']} ({r['status']}) — {r['id']}"
+                for r in reversed(store.history)}
+        pick_ids = st.multiselect("เลือกรายการที่จะลบ", list(opts), format_func=lambda i: opts[i])
+        st.caption("การลบรายการที่ settle แล้วจะไม่ย้อนน้ำหนัก Rule ที่เคยปรับไปแล้ว (ระบบแค่รีเฟรชสถิติ Rule ที่เรียนรู้)")
+        ok_del = st.checkbox("ยืนยันการลบ", key="confirm_hist_del")
+        if st.button("ลบที่เลือก", disabled=not (pick_ids and ok_del)):
+            n = q.delete_records(store, pick_ids)
+            st.success(f"ลบแล้ว {n} รายการ")
+            st.rerun()
 
 # ================================================================ TAB 4
 with tab4:
