@@ -853,7 +853,7 @@ def cmd_analyze(a):
 # 9.1) นำเข้ารูปภาพ (5 รูป) -> สกัดข้อมูลด้วย Claude Vision -> ตรวจสอบ -> วิเคราะห์
 # ----------------------------------------------------------------------------
 API_URL = "https://api.anthropic.com/v1/messages"
-DEFAULT_MODEL = "claude-sonnet-5-5"
+DEFAULT_MODEL = "gemini-3.7-flash"
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".webp": "image/webp", ".gif": "image/gif"}
 
