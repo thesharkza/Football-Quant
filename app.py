@@ -5,22 +5,22 @@ import json
 import os
 import tempfile
 import time
- 
+
 import streamlit as st
- 
+
 import football_quant_v58 as q
- 
+
 st.set_page_config(page_title="Football Quant V5.8", page_icon="⚽", layout="wide")
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
- 
- 
+
+
 def secret(name):
     try:
         return st.secrets[name]
     except Exception:
         return os.environ.get(name)
- 
- 
+
+
 # ---------------------------------------------------------------- รหัสผ่าน (ถ้าตั้งไว้)
 _pw = secret("APP_PASSWORD")
 if _pw and not st.session_state.get("auth"):
@@ -33,7 +33,7 @@ if _pw and not st.session_state.get("auth"):
         else:
             st.error("รหัสผ่านไม่ถูกต้อง")
     st.stop()
- 
+
 # ---------------------------------------------------------------- Sidebar
 with st.sidebar:
     st.header("⚙ ตั้งค่า")
@@ -52,10 +52,10 @@ with st.sidebar:
     desp = st.selectbox("Desperation (หนีตาย/ลุ้นแชมป์)", ["ไม่มี", "เจ้าบ้าน", "ทีมเยือน"])
     st.caption("⚠ บน Streamlit Cloud ไฟล์ในเครื่องจะหายเมื่อแอปรีสตาร์ท "
                "ให้สำรองข้อมูลที่แท็บ 💾 สำรอง/กู้คืน เป็นประจำ")
- 
+
 st.title("⚽ Football Quant V5.8 — Self-Learning")
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 วิเคราะห์", "🏁 ใส่ผลจริง (เรียนรู้)", "📈 สถิติ & Rule", "💾 สำรอง/กู้คืน"])
- 
+
 # ================================================================ TAB 1
 with tab1:
     st.subheader("1) อ่านรูปตารางราคา (ปกติ 5 รูป)")
@@ -82,7 +82,7 @@ with tab1:
                     st.error(str(e.code))
                 except Exception as e:  # noqa
                     st.error(f"เกิดข้อผิดพลาด: {e}")
- 
+
     st.subheader("2) ตรวจ/แก้ข้อมูล")
     with st.expander("หรือโหลดไฟล์ JSON / ตัวอย่าง"):
         jf = st.file_uploader("ไฟล์ JSON ของแมตช์", type=["json"], key="jsonfile")
@@ -97,7 +97,7 @@ with tab1:
             st.session_state["match_json"] = json.dumps(d, ensure_ascii=False, indent=2)
     st.session_state.setdefault("match_json", json.dumps(q.TEMPLATE, ensure_ascii=False, indent=2))
     st.text_area("ข้อมูลแมตช์ (JSON) — เรต HDP/OU มองจากฝั่งเจ้าบ้าน (ลบ = เจ้าบ้านต่อ)", key="match_json", height=380)
- 
+
     save = st.checkbox("บันทึกสัญญาณลงประวัติ (เพื่อใส่ผลจริงทีหลัง)", value=True)
     if st.button("🎯 วิเคราะห์และฟันธง", type="primary"):
         try:
@@ -128,14 +128,14 @@ with tab1:
                 st.info("สัญญาณอ่อน: ระบบถูกบังคับให้ฟันธง (Rule 13) ควรลดสัดส่วนเงินเดิมพัน")
             st.code(q.render_report(m, f, contribs, pick, store), language=None)
             with st.expander("รายละเอียดคะแนนของแต่ละ Rule"):
-                st.dataframe(contribs, width="stretch")
+                st.dataframe(contribs)
             if save:
                 mid, ok = q.record_prediction(store, m, f, contribs, pick)
                 if ok:
                     st.success(f"บันทึกแล้ว id = {mid} → ไปใส่ผลจริงที่แท็บ 🏁 หลังจบเกม")
                 else:
                     st.warning(f"ไม่บันทึก: id '{mid}' ถูก settle ไปแล้ว (เปลี่ยน id ในช่อง JSON)")
- 
+
 # ================================================================ TAB 2
 with tab2:
     store = q.Store(DATA_DIR)
@@ -154,16 +154,15 @@ with tab2:
             (st.success if r > 0 else st.error if r < 0 else st.info)(
                 f"สัญญาณ {rec['pick']['label']} → {q.result_word(r)} ({pf:+.2f} หน่วย)")
             st.write("**Post-Mortem ทุกตลาด**")
-            st.dataframe([{"ตลาด": k, "ผล": q.result_word(v[0])} for k, v in outcomes.items()], width="stretch")
+            st.dataframe([{"ตลาด": k, "ผล": q.result_word(v[0])} for k, v in outcomes.items()])
             if changes:
                 st.write("**ปรับน้ำหนัก Rule**")
                 st.dataframe([{"Rule": k, "ชื่อ": q.RULE_NAMES.get(k, "Learned Rule"), "เดิม": round(o, 3),
-                               "ใหม่": round(n, 3), "ความถูกต้อง": round(rr, 2)} for k, (o, n, rr) in changes.items()],
-                             width="stretch")
+                               "ใหม่": round(n, 3), "ความถูกต้อง": round(rr, 2)} for k, (o, n, rr) in changes.items()])
             for r_ in new:
                 st.success(f"🧠 Rule ใหม่ {r_['id']}: ถ้า [{' + '.join(r_['tags'])}] → {q.ROLE_TH[r_['role']]} "
                            f"(ชนะ {r_['wr']:.0%} จาก {r_['n']} นัด)")
- 
+
 # ================================================================ TAB 3
 with tab3:
     store = q.Store(DATA_DIR)
@@ -186,13 +185,13 @@ with tab3:
     st.dataframe([{"Rule": k, "ชื่อ": q.RULE_NAMES.get(k, "Learned Rule"), "น้ำหนัก": round(v, 3),
                    "ใช้(ครั้ง)": S["rule_stats"].get(k, {}).get("n", 0),
                    "avg r": round(S["rule_stats"].get(k, {}).get("sum_r", 0) / max(S["rule_stats"].get(k, {}).get("n", 0), 1), 2)}
-                  for k, v in sorted(S["weights"].items())], width="stretch")
+                  for k, v in sorted(S["weights"].items())])
     st.subheader("🧠 Rule ที่ระบบสร้างเอง")
     if S["learned_rules"]:
         st.dataframe([{"id": r["id"], "สถานะ": "ON" if r.get("enabled", True) else "OFF",
                        "เงื่อนไข": " + ".join(r["tags"]), "เล่น": q.ROLE_TH[r["role"]],
                        "ชนะ": f"{r['wr']:.0%}", "จำนวนนัด": r["n"], "strength": r["strength"]}
-                      for r in S["learned_rules"]], width="stretch")
+                      for r in S["learned_rules"]])
     else:
         st.caption("ยังไม่มี (ต้องสะสมผลจริงอย่างน้อย ~10 นัดที่มีรูปแบบซ้ำกัน)")
     if st.button("🔍 ค้นหา Rule ใหม่จากประวัติอีกครั้ง"):
@@ -204,8 +203,8 @@ with tab3:
                    "สัญญาณ": r["pick"]["label"], "สถานะ": r["status"],
                    "สกอร์": "-".join(map(str, r.get("score", []))) or "-",
                    "ผล": q.result_word(r["pick_r"]) if r["status"] == "settled" else "-",
-                   "กำไร": r.get("pick_profit", "")} for r in reversed(store.history)], width="stretch")
- 
+                   "กำไร": r.get("pick_profit", "")} for r in reversed(store.history)])
+
 # ================================================================ TAB 4
 with tab4:
     store = q.Store(DATA_DIR)
