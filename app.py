@@ -14,11 +14,31 @@ st.set_page_config(page_title="Football Quant V5.8", page_icon="⚽", layout="wi
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
 
-def secret(name):
+def _all_secrets():
+    """รวม secrets ทั้งระดับบนสุดและที่อยู่ใต้ [section] (ชื่อไม่สนตัวพิมพ์เล็กใหญ่)"""
+    out = {}
     try:
-        return st.secrets[name]
+        items = [(k, st.secrets[k]) for k in st.secrets]
     except Exception:
-        return os.environ.get(name)
+        return out
+    for k, v in items:                       # รอบแรก: ค่าที่อยู่ใต้ [section]
+        if hasattr(v, "keys"):
+            for k2 in v.keys():
+                out[str(k2).strip().upper()] = v[k2]
+    for k, v in items:                       # รอบสอง: ระดับบนสุด (ให้สิทธิ์เหนือกว่า)
+        if not hasattr(v, "keys"):
+            out[str(k).strip().upper()] = v
+    return out
+
+
+def secret(name):
+    v = _all_secrets().get(name.upper())
+    if v is None:
+        v = os.environ.get(name)
+    if v is None:
+        return None
+    v = str(v).strip().strip('"').strip("'").strip()
+    return v or None
 
 
 # ---------------------------------------------------------------- รหัสผ่าน (ถ้าตั้งไว้)
@@ -42,6 +62,13 @@ with st.sidebar:
     _kname = "GEMINI_API_KEY" if q.is_gemini(model) else "ANTHROPIC_API_KEY"
     api_key = q.api_key_for(model, secret) or st.text_input(_kname, type="password",
                                                             help="ใช้อ่านรูปเท่านั้น ไม่ถูกบันทึก")
+    with st.expander("🔎 ตรวจ Secrets"):
+        names = sorted(_all_secrets().keys())
+        st.write("ชื่อตัวแปรที่แอปอ่านเจอ:", ", ".join(names) if names else "— ไม่พบเลย —")
+        for _n in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "APP_PASSWORD"):
+            st.write(("✅ " if secret(_n) else "❌ ") + _n)
+        st.caption("ถ้าเป็น ❌ ทั้งที่ใส่แล้ว: ตรวจการสะกดชื่อ, ค่าต้องอยู่ในเครื่องหมายคำพูด \"...\" "
+                   "และกด Save ที่หน้า Secrets แล้วรอแอปรีสตาร์ท")
     st.subheader("บริบทแมตช์ (override)")
     ctx_over = {
         "derby": st.checkbox("ดาร์บี้แมตช์"),
