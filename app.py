@@ -37,9 +37,11 @@ if _pw and not st.session_state.get("auth"):
 # ---------------------------------------------------------------- Sidebar
 with st.sidebar:
     st.header("⚙ ตั้งค่า")
-    api_key = secret("ANTHROPIC_API_KEY") or st.text_input("ANTHROPIC_API_KEY", type="password",
-                                                           help="ใช้อ่านรูปเท่านั้น ไม่ถูกบันทึก")
-    model = st.text_input("โมเดลอ่านรูป", value=os.environ.get("QUANT_MODEL", q.DEFAULT_MODEL))
+    model = st.text_input("โมเดลอ่านรูป", value=os.environ.get("QUANT_MODEL", q.DEFAULT_MODEL),
+                          help="ขึ้นต้น gemini → ใช้ GEMINI_API_KEY | ขึ้นต้น claude → ใช้ ANTHROPIC_API_KEY")
+    _kname = "GEMINI_API_KEY" if q.is_gemini(model) else "ANTHROPIC_API_KEY"
+    api_key = q.api_key_for(model, secret) or st.text_input(_kname, type="password",
+                                                            help="ใช้อ่านรูปเท่านั้น ไม่ถูกบันทึก")
     st.subheader("บริบทแมตช์ (override)")
     ctx_over = {
         "derby": st.checkbox("ดาร์บี้แมตช์"),
@@ -61,9 +63,9 @@ with tab1:
     st.subheader("1) อ่านรูปตารางราคา (ปกติ 5 รูป)")
     files = st.file_uploader("ภาพสรุปแมตช์/ฟอร์ม, 1X2, Handicap, Over/Under, H2H",
                              type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True)
-    if st.button("🖼 อ่านรูปด้วย Claude", disabled=not files):
+    if st.button("🖼 อ่านรูปด้วย AI", disabled=not files):
         if not api_key:
-            st.error("ต้องใส่ ANTHROPIC_API_KEY (Secrets หรือช่องใน Sidebar)")
+            st.error("ต้องใส่ API key ของโมเดลที่เลือก (Secrets หรือช่องใน Sidebar)")
         else:
             with st.spinner("กำลังอ่านรูป..."):
                 try:
