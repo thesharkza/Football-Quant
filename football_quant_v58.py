@@ -850,12 +850,10 @@ def cmd_analyze(a):
 
 
 # ----------------------------------------------------------------------------
-# 9.1) นำเข้ารูปภาพ (5 รูป) -> สกัดข้อมูลด้วย Claude Vision -> ตรวจสอบ -> วิเคราะห์
+# 9.1) นำเข้ารูปภาพ (5 รูป) -> สกัดข้อมูลด้วย Gemini -> ตรวจสอบ -> วิเคราะห์
 # ----------------------------------------------------------------------------
-API_URL = "https://api.anthropic.com/v1/messages"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_MODEL = "gemini-3.7-flash"          # ใช้ Gemini เป็นค่าเริ่มต้น (ชื่อที่ขึ้นต้นด้วย gemini)
-CLAUDE_MODEL = "claude-sonnet-5-5"          # ถ้าใส่ชื่อโมเดล claude-* จะเรียก Anthropic แทน
+DEFAULT_MODEL = "gemini-3.7-flash"
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".webp": "image/webp", ".gif": "image/gif"}
 
@@ -944,15 +942,9 @@ def consolidate_books(m):
     return w
 
 
-def is_gemini(model):
-    return str(model).lower().startswith("gemini")
-
-
-def api_key_for(model, getter):
-    """getter(name) -> ค่า secret/env ; คืนคีย์ที่เหมาะกับผู้ให้บริการของโมเดล"""
-    if is_gemini(model):
-        return getter("GEMINI_API_KEY") or getter("GOOGLE_API_KEY")
-    return getter("ANTHROPIC_API_KEY")
+def get_api_key(getter):
+    """getter(name) -> ค่า secret/env ; ใช้คีย์ Gemini เท่านั้น"""
+    return getter("GEMINI_API_KEY") or getter("GOOGLE_API_KEY")
 
 
 def _load_images(paths):
@@ -983,35 +975,26 @@ def _post_json(url, headers, payload):
 
 
 def extract_from_images(paths, model, api_key):
-    """อ่านรูปด้วย Gemini (ชื่อโมเดลขึ้นต้น gemini) หรือ Claude แล้วคืน dict ข้อมูลแมตช์"""
+    """อ่านรูปด้วย Gemini แล้วคืน dict ข้อมูลแมตช์"""
+    if not str(model).lower().startswith("gemini"):
+        sys.exit(f"รองรับเฉพาะโมเดล Gemini (ได้รับ '{model}')")
     imgs = _load_images(paths)
     task = EXTRACT_PROMPT + json.dumps(EXTRACT_SCHEMA, ensure_ascii=False, indent=1)
-    if is_gemini(model):
-        parts = []
-        for i, (name, mt, b64) in enumerate(imgs, 1):
-            parts.append({"text": f"รูปที่ {i}: {name}"})
-            parts.append({"inline_data": {"mime_type": mt, "data": b64}})
-        parts.append({"text": task})
-        data = _post_json(GEMINI_URL.format(model=model),
-                          {"content-type": "application/json", "x-goog-api-key": api_key},
-                          {"contents": [{"role": "user", "parts": parts}],
-                           "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 8192}})
-        cands = data.get("candidates") or []
-        if not cands:
-            fb = data.get("promptFeedback", {})
-            sys.exit(f"Gemini ไม่ส่งผลลัพธ์กลับมา: {json.dumps(fb, ensure_ascii=False)[:300] or 'ไม่ทราบสาเหตุ'}")
-        text = "".join(pt.get("text", "") for pt in cands[0].get("content", {}).get("parts", [])
-                       if not pt.get("thought"))
-        return parse_json_reply(text)
-    content = []
+    parts = []
     for i, (name, mt, b64) in enumerate(imgs, 1):
-        content.append({"type": "text", "text": f"รูปที่ {i}: {name}"})
-        content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": b64}})
-    content.append({"type": "text", "text": task})
-    data = _post_json(API_URL, {"content-type": "application/json", "x-api-key": api_key,
-                                "anthropic-version": "2023-06-01"},
-                      {"model": model, "max_tokens": 3000, "messages": [{"role": "user", "content": content}]})
-    text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+        parts.append({"text": f"รูปที่ {i}: {name}"})
+        parts.append({"inline_data": {"mime_type": mt, "data": b64}})
+    parts.append({"text": task})
+    data = _post_json(GEMINI_URL.format(model=model),
+                      {"content-type": "application/json", "x-goog-api-key": api_key},
+                      {"contents": [{"role": "user", "parts": parts}],
+                       "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 8192}})
+    cands = data.get("candidates") or []
+    if not cands:
+        fb = data.get("promptFeedback", {})
+        sys.exit(f"Gemini ไม่ส่งผลลัพธ์กลับมา: {json.dumps(fb, ensure_ascii=False)[:300] or 'ไม่ทราบสาเหตุ'}")
+    text = "".join(pt.get("text", "") for pt in cands[0].get("content", {}).get("parts", [])
+                   if not pt.get("thought"))
     return parse_json_reply(text)
 
 
@@ -1086,13 +1069,11 @@ def validate_match(m):
 
 
 def cmd_images(a):
-    key = api_key_for(a.model, os.environ.get)
+    key = get_api_key(os.environ.get)
     if not key:
-        if is_gemini(a.model):
-            sys.exit("ต้องตั้งค่า environment variable GEMINI_API_KEY ก่อน (สร้างที่ https://aistudio.google.com/apikey)\n"
-                     "  macOS/Linux: export GEMINI_API_KEY=...\n"
-                     "  Windows PS : $env:GEMINI_API_KEY='...'")
-        sys.exit("ต้องตั้งค่า environment variable ANTHROPIC_API_KEY ก่อน")
+        sys.exit("ต้องตั้งค่า environment variable GEMINI_API_KEY ก่อน (สร้างที่ https://aistudio.google.com/apikey)\n"
+                 "  macOS/Linux: export GEMINI_API_KEY=...\n"
+                 "  Windows PS : $env:GEMINI_API_KEY='...'")
     if len(a.images) != 5:
         print(f"⚠ ได้รับ {len(a.images)} รูป (ปกติใช้ 5 รูป) จะดำเนินการต่อ")
     print(f"🖼  กำลังอ่าน {len(a.images)} รูปด้วย {a.model} ...")
@@ -1181,6 +1162,26 @@ def cmd_settle(a):
                   f"  (ชนะ {r_['wr']:.0%} จาก {r_['n']} นัด, strength {r_['strength']})")
 
 
+def delete_records(store, ids):
+    """ลบรายการออกจากประวัติ (pending หรือ settled) คืนจำนวนที่ลบ
+    หมายเหตุ: น้ำหนัก Rule ที่เคยปรับจากรายการที่ settle แล้วจะไม่ถูกย้อนกลับ"""
+    ids = set(ids)
+    before = len(store.history)
+    had_settled = any(r["id"] in ids and r["status"] == "settled" for r in store.history)
+    store.history = [r for r in store.history if r["id"] not in ids]
+    n = before - len(store.history)
+    if had_settled:
+        discover_rules(store, verbose=False)         # รีเฟรชสถิติ Rule ที่เรียนรู้จากประวัติที่เหลือ
+    if n:
+        store.save()
+    return n
+
+
+def cmd_delete(a):
+    n = delete_records(Store(a.data_dir), a.ids)
+    print(f"ลบแล้ว {n} รายการ" if n else "ไม่พบ id ที่ระบุ")
+
+
 def cmd_learn(a):
     store = Store(a.data_dir)
     new = discover_rules(store)
@@ -1233,7 +1234,7 @@ def main():
     p.add_argument("input")
     p.add_argument("--no-save", action="store_true")
     p.set_defaults(fn=cmd_analyze)
-    p = sp.add_parser("images", help="อ่านรูป 5 รูปด้วย Gemini/Claude แล้ววิเคราะห์ (ต้องมี GEMINI_API_KEY หรือ ANTHROPIC_API_KEY)")
+    p = sp.add_parser("images", help="อ่านรูป 5 รูปด้วย Gemini แล้ววิเคราะห์ (ต้องมี GEMINI_API_KEY)")
     p.add_argument("images", nargs="+", help="ไฟล์รูป png/jpg/webp (ปกติ 5 รูป)")
     p.add_argument("--model", default=os.environ.get("QUANT_MODEL", DEFAULT_MODEL))
     p.add_argument("--match-id")
@@ -1250,6 +1251,9 @@ def main():
     p.add_argument("id")
     p.add_argument("score", help="เหย้า-เยือน เช่น 2-1")
     p.set_defaults(fn=cmd_settle)
+    p = sp.add_parser("delete", help="ลบรายการออกจากประวัติ")
+    p.add_argument("ids", nargs="+")
+    p.set_defaults(fn=cmd_delete)
     sp.add_parser("learn", help="ค้นหา Rule ใหม่จากประวัติ").set_defaults(fn=cmd_learn)
     sp.add_parser("stats", help="ดูผลงานและน้ำหนัก Rule").set_defaults(fn=cmd_stats)
     sp.add_parser("template", help="พิมพ์ JSON ตัวอย่าง").set_defaults(
