@@ -50,6 +50,7 @@ DEFAULT_PARAMS = {
     "decouple_min_pp": 3.0,      # และต้องต่างกันอย่างน้อย 3 จุด %
     "crash_min": 0.25,           # เรตร่วงอย่างน้อย 0.25 ถึงเรียก Crash
     "water_drop_min": 0.06,      # ค่าน้ำลดอย่างน้อย 0.06 ถึงนับเป็น Silent Money
+    "water_per_quarter": 0.10,   # ค่าประมาณ: เรตเปลี่ยน 0.25 ลูก ค่าน้ำเปลี่ยนตามธรรมชาติ ~0.10 (ใช้ปรับค่าน้ำข้ามเรต)
     "x12_flat_pp": 1.0,
     "x12_steam_pp": 3.0,
     "ou_gap": 0.35,
@@ -69,7 +70,7 @@ DEFAULT_PARAMS = {
 
 DEFAULT_WEIGHTS = {
     "R1": 1.0, "R2": 1.5, "R3": 1.0, "R4": 1.0, "R5": 1.0, "R6": 1.0, "R7": 1.0,
-    "R8": 1.0, "R9": 1.0, "R10": 1.0, "R11": 1.0, "R12": 1.0, "R14": 1.5, "R16": 1.0,
+    "R8": 1.0, "R9": 1.0, "R10": 1.0, "R11": 1.0, "R12": 1.0, "R14": 1.5, "R16": 1.0, "R17": 1.0,
 }
 
 RULE_NAMES = {
@@ -87,6 +88,7 @@ RULE_NAMES = {
     "R12": "Away Favorite Volatility Guard",
     "R14": "Class Superiority Override",
     "R16": "Late-Goal Buffer for Derbies",
+    "R17": "Coupled Steam Confirmation",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
 NOISE_RULES = {"R1", "R9"}               # กฎที่ถูกลดน้ำหนักเมื่อความขัดแย้ง <= 20% (Rule 11)
@@ -178,6 +180,11 @@ def build_features(m, P):
     dc = hc["away_water"] if fav == "home" else hc["home_water"]
     f["fav_drop"], f["dog_drop"] = fo - fc, do - dc    # + = ค่าน้ำลด
     f["fav_water_c"], f["dog_water_c"] = fc, dc
+    # ค่าน้ำที่ปรับตามการเปลี่ยนเรตแล้ว: เรตลึกขึ้น -> ค่าน้ำทีมต่อสูงขึ้น/ทีมรองต่ำลงตามธรรมชาติ ไม่ใช่สัญญาณ
+    sq = f["hdp_shift_fav"] / 0.25
+    f["fav_drop_adj"] = f["fav_drop"] + sq * P["water_per_quarter"]
+    f["dog_drop_adj"] = f["dog_drop"] - sq * P["water_per_quarter"]
+    f["hdp_agree"] = m.get("hdp_agree")
 
     # --- 1X2 anchor ---
     f["x12_pp"] = (pc[fav_idx] - po[fav_idx]) * 100
@@ -365,7 +372,7 @@ def rule5(f, P):
     n = f["h2h_n"]
     if n >= 3:
         r = (f["h2h_fav_w"] - f["h2h_dog_w"]) / n
-        lure = f["hdp_shift_fav"] > 0 or f["fav_drop"] < -0.04
+        lure = f["hdp_shift_fav"] > 0 or f["fav_drop_adj"] < -0.04
         if r >= 0.6 and lure:
             out.append(("R5", f["dog_hdp"], 0.8, f"H2H ทีมต่อเด่น ({f['h2h_fav_w']}/{n}) แต่ราคาถูกดันตามมหาชน -> ระวัง Public Bias ล่อเม่า"))
         elif r >= 0.6:
@@ -407,20 +414,47 @@ def rule8(f, P):
 
 
 def rule9(f, P):
-    """Anti-Fake Steam Matrix: แยก Silent Money ออกจาก Public Steam"""
+    """Anti-Fake Steam Matrix: แยก Silent Money ออกจาก Public Steam
+    - เทียบค่าน้ำแบบปรับตามเรตแล้ว (fav_drop_adj/dog_drop_adj)
+    - ถ้า HDP ยืนยันการไหลของพูล 1X2 (เรตขยับไปทางเดียวกัน) ไม่นับเป็น Fake Steam เว้นแต่มหาชนแห่แทงหนัก (ดู Rule 17)"""
     silent = abs(f["hdp_shift_fav"]) < 0.01 and max(f["fav_drop"], f["dog_drop"]) >= P["water_drop_min"]
     if silent:
         return []
+    s = f["hdp_shift_fav"]
     out = []
-    for side, pp, pct, water_drop, mk_fade in (
-        ("fav", f["x12_pp"], f["public_fav"], f["fav_drop"], f["dog_hdp"]),
-        ("dog", f["dog_pp"], f["public_dog"], f["dog_drop"], f["fav_hdp"]),
+    for side, pp, pct, adj, mk_fade, confirmed in (
+        ("fav", f["x12_pp"], f["public_fav"], f["fav_drop_adj"], f["dog_hdp"], s >= P["crash_min"]),
+        ("dog", f["dog_pp"], f["public_dog"], f["dog_drop_adj"], f["fav_hdp"], s <= -P["crash_min"]),
     ):
-        if pp >= P["x12_steam_pp"] and water_drop < P["water_drop_min"]:
-            v = 0.6 + (0.4 if (pct is not None and pct >= 65) else 0.0)
-            nm = f["fav_name"] if side == "fav" else f["dog_name"]
-            out.append(("R9", mk_fade, v, f"Public Steam: พูล 1X2 ของ {nm} ไหล +{pp:.1f}pp โดยไม่มีลายเซ็น Silent Money -> Fade"))
+        if pp < P["x12_steam_pp"] or adj >= P["water_drop_min"]:
+            continue
+        heavy = pct is not None and pct >= 65
+        if confirmed and not heavy:
+            continue                                   # การไหลยืนยันกัน -> ไม่ใช่ Fake Steam
+        v = 0.5 if confirmed else 0.6 + (0.4 if heavy else 0.0)
+        nm = f["fav_name"] if side == "fav" else f["dog_name"]
+        why = "HDP ยืนยัน แต่มหาชนแห่แทงหนัก" if confirmed else "ไม่มีลายเซ็น Silent Money และ HDP ไม่ยืนยัน"
+        out.append(("R9", mk_fade, v, f"Public Steam: พูล 1X2 ของ {nm} ไหล +{pp:.1f}pp ({why}) -> Fade"))
     return out
+
+
+def rule17(f, P):
+    """Coupled Steam Confirmation: เรต HDP + พูล 1X2 + โบรกเกอร์ส่วนใหญ่ ไหลไปทางเดียวกัน
+    โดยราคา (ปรับตามเรตแล้ว) ไม่แย่ลง และไม่มีหลักฐานมหาชนแห่หนัก -> ถือเป็นการไหลจริง หนุนฝั่งนั้น"""
+    s = f["hdp_shift_fav"]
+    if abs(s) < P["crash_min"]:
+        return []
+    if s > 0:
+        nm, pp, adj, pct, mk = f["fav_name"], f["x12_pp"], f["fav_drop_adj"], f["public_fav"], f["fav_hdp"]
+    else:
+        nm, pp, adj, pct, mk = f["dog_name"], f["dog_pp"], f["dog_drop_adj"], f["public_dog"], f["dog_hdp"]
+    if pp < P["x12_steam_pp"] or adj < -0.03 or (pct is not None and pct >= 65):
+        return []
+    ag = f.get("hdp_agree")
+    agf = 0.8 if ag is None else 0.6 + 0.4 * ag
+    val = min(abs(s) / 0.25, 2.0) * agf
+    ag_txt = "" if ag is None else f", โบรกเกอร์ขยับทางเดียวกัน {ag:.0%}"
+    return [("R17", mk, val, f"Coupled Steam: เรต HDP {s:+g} + พูล 1X2 {nm} +{pp:.1f}pp{ag_txt} ยืนยันกัน (ค่าน้ำปรับตามเรตแล้วไม่แย่ลง)")]
 
 
 def rule11(f, P):
@@ -458,7 +492,7 @@ def rule16(f, P):
     return []
 
 
-RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9, rule11, rule12, rule14, rule16]
+RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9, rule11, rule12, rule14, rule16, rule17]
 ROLE_TO_MARKET = lambda role, f: {
     "HDP_FAV": f["fav_hdp"], "HDP_DOG": f["dog_hdp"], "OU_OVER": "OU_OVER",
     "OU_UNDER": "OU_UNDER", "X12_FAV": f["fav_x12"]}[role]
@@ -596,7 +630,9 @@ def render_report(m, f, contribs, pick, store):
     L.append("\n📊 วิเคราะห์เจาะลึก V5.8 Reality Check")
     L.append(f"  • ทีมต่อ: {f['fav_name']} ({'เหย้า' if f['fav'] == 'home' else 'เยือน'})  เรตเปิด {fmt_line(f['line_o'])} -> ปัจจุบัน {fmt_line(f['line_c'])}"
              f"  (ทีมต่อ{'แรงขึ้น' if f['hdp_shift_fav'] > 0 else 'อ่อนลง' if f['hdp_shift_fav'] < 0 else 'คงที่'} {f['hdp_shift_fav']:+g})")
-    L.append(f"  • ค่าน้ำทีมต่อ {f['fav_water_c']:.2f} (เปลี่ยน {-f['fav_drop']:+.2f}) | ทีมรอง {f['dog_water_c']:.2f} (เปลี่ยน {-f['dog_drop']:+.2f})")
+    adj_txt = (f"  [ปรับตามเรตแล้ว: ทีมต่อ {-f['fav_drop_adj']:+.2f} / ทีมรอง {-f['dog_drop_adj']:+.2f}]"
+               if abs(f["hdp_shift_fav"]) >= 0.01 else "")
+    L.append(f"  • ค่าน้ำทีมต่อ {f['fav_water_c']:.2f} (เปลี่ยน {-f['fav_drop']:+.2f}) | ทีมรอง {f['dog_water_c']:.2f} (เปลี่ยน {-f['dog_drop']:+.2f}){adj_txt}")
     L.append(f"  • พูล 1X2 ทีมต่อ {f['x12_pp']:+.1f}pp | ทีมรอง {f['dog_pp']:+.1f}pp | ความขัดแย้งพูล↔HDP = {f['conflict']:.0%}"
              f" {'(เกินเกณฑ์ 20%)' if f['conflict'] > P['decouple_threshold'] else '(ต่ำกว่าเกณฑ์ -> ถือเป็น noise)'}")
     if f["has_ou"]:
@@ -625,7 +661,7 @@ def render_report(m, f, contribs, pick, store):
         L.append("    (ไม่มี Rule ใดทำงาน)")
 
     L.append("\n🔍 ถอดรหัสเจตนาโต๊ะ")
-    keyr = [c for c in contribs if c["rule"] in ("R1", "R2", "R5", "R9", "R11") or c["rule"].startswith("L")]
+    keyr = [c for c in contribs if c["rule"] in ("R1", "R2", "R5", "R9", "R11", "R17") or c["rule"].startswith("L")]
     if keyr:
         for c in keyr:
             L.append(f"  - {c['note']}")
@@ -939,6 +975,17 @@ def consolidate_books(m):
         else:
             m[key] = out
     m["n_books"] = len(books)
+    # สัดส่วนโบรกเกอร์ที่ขยับเรต HDP ไปทางเดียวกับเรตรวม (ใช้ใน Rule 17)
+    m["hdp_agree"] = None
+    h = m.get("hdp")
+    if isinstance(h, dict) and h.get("open") and h.get("current"):
+        main = sign(h["open"]["line"] - h["current"]["line"])      # + = เจ้าบ้านแรงขึ้น
+        if main != 0:
+            moves = [sign(b["hdp"]["open"]["line"] - b["hdp"]["current"]["line"]) for b in books
+                     if isinstance(b.get("hdp"), dict) and all(isinstance(b["hdp"].get(t), dict) and _num(b["hdp"][t].get("line"))
+                                                               for t in ("open", "current"))]
+            if moves:
+                m["hdp_agree"] = round(sum(1 for x in moves if x == main) / len(moves), 3)
     return w
 
 
