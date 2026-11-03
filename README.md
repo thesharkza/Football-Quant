@@ -1,12 +1,12 @@
-# ⚽ Football Quant V5.8 — Self-Learning (Streamlit)
+# ⚽ Football Quant V5.9 — Self-Learning (Streamlit)
 
-วิเคราะห์ตารางราคา 1X2 / Asian Handicap / OU ด้วย Rule 1-16 ฟันธงเดี่ยว 1 ตัวเลือก
+วิเคราะห์ตารางราคา 1X2 / Asian Handicap / OU ด้วย Rule 1-26 (+ R27 Coupled Steam, R28 Current Odds Anchor), Home/Away Verification Protocol และ Current Odds Priority ฟันธงเดี่ยว 1 ตัวเลือก
 และเรียนรู้จากผลจริง (ปรับน้ำหนัก Rule + สร้าง Rule ใหม่อัตโนมัติ)
 
 ## รันในเครื่อง
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...      # ใช้เฉพาะตอนอ่านรูป
+export GEMINI_API_KEY=...                # ใช้เฉพาะตอนอ่านรูป (โมเดลเริ่มต้น gemini-3.7-flash)
 streamlit run app.py
 ```
 ใช้ผ่านบรรทัดคำสั่งก็ได้: `python football_quant_v58.py --help`
@@ -16,7 +16,7 @@ streamlit run app.py
 2. ไปที่ https://share.streamlit.io → New app → เลือก repo/branch → Main file path: `app.py`
 3. Advanced settings → **Secrets** วาง:
    ```toml
-   ANTHROPIC_API_KEY = "sk-ant-..."
+   GEMINI_API_KEY = "..."
    APP_PASSWORD = "รหัสผ่านของคุณ"
    ```
 4. Deploy
@@ -28,3 +28,12 @@ streamlit run app.py
 - ทุกคนที่เข้าลิงก์ใช้ข้อมูลเรียนรู้ชุดเดียวกัน และการอ่านรูปใช้ API key ของคุณ → ตั้ง `APP_PASSWORD` เสมอ
 - รองรับรูป png/jpg/webp/gif ไม่เกิน 5MB ต่อรูป (ไม่รองรับ HEIC)
 - เครื่องมือเชิงสถิติ/ฮิวริสติก ไม่รับประกันผลลัพธ์
+
+## V5.9 มีอะไรเพิ่ม
+- **Home/Away Verification Protocol:** ตรวจสิทธิ์เหย้า/เยือนก่อนทุกครั้ง (เรต HDP ปัจจุบัน vs 1X2 ปัจจุบัน, คอลัมน์ซ้ายของตาราง Asian Handicap, ชื่อทีมของ H2H) ถ้าไม่ผ่านจะลดระดับสัญญาณเป็น "ต่ำ"
+- **Current Odds Priority:** รายงานแสดงราคาปัจจุบันเป็นหลัก ราคาเปิดใช้อ้างอิงการไหลเท่านั้น และสัญญาณที่มาจากการไหลของราคาล้วน (ไม่มีราคาปัจจุบัน/บริบทหนุน) จะถูกลดคะแนนเหลือ 60%
+- **Rule 17-26:** Table Control, Home Pride, High-Scoring Filter, Away Favorite Buffer, Continental Cup Shield, Home Momentum, False Giant Slump Shield
+- **Rule 27/28 (เพิ่มเอง):** Coupled Steam Confirmation (เดิมคือ R17 ใน V5.8) และ Current Odds Anchor
+
+ข้อมูลเสริมในไฟล์ JSON (ไม่บังคับ): `rank`, `league_size`, `ah_left_team`, `home_form_home` (`{"w":3,"d":2,"l":0}` ในบ้าน 5 นัด),
+`stats.away_counter_pct`, และ context `high_draw_league` / `continental_cup` ดูตัวอย่างใน `example_match.json`
