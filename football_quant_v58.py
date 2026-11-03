@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Football Quant V5.8 (Advanced Volatility, Trap Shield & Class Superiority Edition)
+Football Quant V5.9 (Advanced Volatility, Trap Shield & Class Superiority Edition)
 + Self-Learning Rule Engine
 
 ทำอะไรได้บ้าง
-  1) analyze : วิเคราะห์ตารางราคา (1X2 / HDP / OU) ตาม Rule 1-16 แล้ว "ฟันธงเดี่ยว" 1 ตัวเลือก
+  1) analyze : วิเคราะห์ตารางราคา (1X2 / HDP / OU) ตาม Rule 1-26 (+R27 Coupled Steam, R28 Current Odds Anchor) แล้ว "ฟันธงเดี่ยว" 1 ตัวเลือก
   2) settle  : ใส่สกอร์จริง -> Post-Match Post-Mortem -> ปรับน้ำหนักแต่ละ Rule อัตโนมัติ
                และ "สร้าง Rule ใหม่" (Learned Rules) จากรูปแบบที่ชนะ/แพ้ซ้ำ ๆ
   3) learn   : รันการค้นหา Rule ใหม่จากประวัติทั้งหมดอีกครั้ง
@@ -50,6 +50,12 @@ DEFAULT_PARAMS = {
     "decouple_min_pp": 3.0,      # และต้องต่างกันอย่างน้อย 3 จุด %
     "crash_min": 0.25,           # เรตร่วงอย่างน้อย 0.25 ถึงเรียก Crash
     "water_drop_min": 0.06,      # ค่าน้ำลดอย่างน้อย 0.06 ถึงนับเป็น Silent Money
+    "move_only_discount": 0.60,  # Current Odds Priority: สัญญาณที่มาจากการไหลของราคาล้วน (ไม่มีราคาปัจจุบัน/บริบทหนุน) ลดเหลือ 60%
+    "skew_min": 0.08,            # ส่วนต่างค่าน้ำปัจจุบันของสองฝั่ง ที่ถือว่าโต๊ะกดราคาฝั่งใดฝั่งหนึ่ง
+    "rank_gap_dog": 4,           # Rule 18: ทีมต่ออยู่อันดับต่ำกว่าทีมรอง >= 4 อันดับ
+    "rank_gap_fav": 6,           # Rule 18: ทีมต่ออยู่อันดับสูงกว่าทีมรอง >= 6 อันดับ
+    "bottom_zone": 0.75,         # Rule 19: โซนท้ายตาราง = อันดับ > 75% ของจำนวนทีมในลีก
+    "counter_pct": 40.0,         # Rule 24: ประสิทธิภาพสวนกลับ > 40%
     "water_per_quarter": 0.10,   # ค่าประมาณ: เรตเปลี่ยน 0.25 ลูก ค่าน้ำเปลี่ยนตามธรรมชาติ ~0.10 (ใช้ปรับค่าน้ำข้ามเรต)
     "x12_flat_pp": 1.0,
     "x12_steam_pp": 3.0,
@@ -70,7 +76,8 @@ DEFAULT_PARAMS = {
 
 DEFAULT_WEIGHTS = {
     "R1": 1.0, "R2": 1.5, "R3": 1.0, "R4": 1.0, "R5": 1.0, "R6": 1.0, "R7": 1.0,
-    "R8": 1.0, "R9": 1.0, "R10": 1.0, "R11": 1.0, "R12": 1.0, "R14": 1.5, "R16": 1.0, "R17": 1.0,
+    "R8": 1.0, "R9": 1.0, "R10": 1.0, "R11": 1.0, "R12": 1.0, "R14": 1.5, "R16": 1.0, "R17": 1.0, "R18": 1.0, "R19": 1.0,
+    "R20": 1.0, "R21": 1.0, "R22": 1.0, "R23": 1.0, "R24": 1.0, "R25": 1.5, "R26": 1.5, "R27": 1.0, "R28": 1.0,
 }
 
 RULE_NAMES = {
@@ -88,9 +95,21 @@ RULE_NAMES = {
     "R12": "Away Favorite Volatility Guard",
     "R14": "Class Superiority Override",
     "R16": "Late-Goal Buffer for Derbies",
-    "R17": "Coupled Steam Confirmation",
+    "R17": "Table Control: ลีกอัตราเสมอสูง",
+    "R18": "Table Control: อันดับสวนทางราคา",
+    "R19": "Table Control: ทีมเยือนโซนท้ายตาราง",
+    "R20": "Draw-Prone League: เอนต่ำ",
+    "R21": "Home Pride & Underdog Defensive Resurgence",
+    "R22": "High-Scoring League Volatility Filter",
+    "R23": "Away Favorite Security Buffer (Balanced Table)",
+    "R24": "Continental Cup Underdog Shield",
+    "R25": "Home Momentum Over Market Value",
+    "R26": "False Giant Slump Shield",
+    "R27": "Coupled Steam Confirmation",
+    "R28": "Current Odds Anchor (ราคาปัจจุบัน)",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
+MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "R27"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
 NOISE_RULES = {"R1", "R9"}               # กฎที่ถูกลดน้ำหนักเมื่อความขัดแย้ง <= 20% (Rule 11)
 
 ROLE_TH = {
@@ -248,10 +267,82 @@ def build_features(m, P):
     f["public_fav"] = pub.get("home" if fav == "home" else "away")
     f["public_dog"] = pub.get("home" if dog == "home" else "away")
 
+    # --- V5.9: ตารางคะแนน / ฟอร์ม / บริบทเพิ่มเติม ---
+    f["continental"] = bool(ctx.get("continental_cup"))
+    f["high_draw"] = bool(ctx.get("high_draw_league"))
+    rk = m.get("rank") or {}
+    f["rank_home"] = rk.get("home") if _num(rk.get("home")) else None
+    f["rank_away"] = rk.get("away") if _num(rk.get("away")) else None
+    f["rank_fav"], f["rank_dog"] = (f["rank_home"], f["rank_away"]) if fav == "home" else (f["rank_away"], f["rank_home"])
+    f["rank_gap"] = (f["rank_fav"] - f["rank_dog"]) if (f["rank_fav"] is not None and f["rank_dog"] is not None) else None
+    ls = m.get("league_size")
+    f["league_size"] = ls if _num(ls) and ls > 0 else None
+    f["home_gf"], f["home_ga"] = g("home_gf"), g("home_ga")
+
+    def _wr(side):
+        x = (m.get("form") or {}).get(side) or {}
+        if _num(x.get("win_rate")):
+            return float(x["win_rate"])
+        seq = str(x.get("seq") or "").upper()
+        return 100.0 * seq.count("W") / len(seq) if seq else None
+    f["fav_win_rate"], f["dog_win_rate"] = _wr(fav), _wr(dog)
+    f["false_giant"] = bool(f["value_ratio"] is not None and f["value_ratio"] > 1
+                            and f["fav_win_rate"] is not None and f["fav_win_rate"] <= 20)       # Rule 26
+    cp = st.get("away_counter_pct")
+    f["shield24"] = bool(f["continental"] and cp is not None and cp > P["counter_pct"])           # Rule 24
+    if f["false_giant"] or f["shield24"]:
+        f["class_sup"] = False                                                                   # ปิด Rule 14
+    hfh = m.get("home_form_home") or {}
+    gm = sum(hfh.get(k, 0) for k in ("w", "d", "l") if _num(hfh.get(k)))
+    f["home_momentum"] = bool(abs(lc) < 1e-9 and gm >= 5 and hfh.get("l", 0) == 0 and hfh.get("w", 0) / gm > 0.5)  # Rule 25
+    veto = set()
+    if f["class_sup"]:
+        veto.add(f["dog_hdp"])
+    if f["false_giant"]:
+        veto.add(f["fav_hdp"])
+    if f["home_momentum"]:
+        veto.add("HDP_AWAY")
+    f["veto"] = sorted(veto)
+
     f["form"] = m.get("form")
     f["n_books"] = m.get("n_books")
+    f["verify"] = verify_home_away(m, f)
+    f["verify_fail"] = any(not ok for ok, _ in f["verify"])
     f["tags"] = make_tags(f, P)
     return f
+
+
+def _same_team(a, b):
+    a, b = re.sub(r"\s+", " ", str(a or "")).strip().lower(), re.sub(r"\s+", " ", str(b or "")).strip().lower()
+    return bool(a and b and (a == b or a in b or b in a))
+
+
+def verify_home_away(m, f):
+    """Home/Away Verification Protocol: ตรวจสิทธิ์เหย้า(ซ้าย)/เยือน(ขวา) และความสอดคล้องของราคา คืน [(ผ่านไหม, ข้อความ)]"""
+    v = []
+    home, away = f["home"], f["away"]
+    v.append((not _same_team(home, away) or home == "Home", f"เหย้า (ซ้าย) = {home}  |  เยือน (ขวา) = {away}"))
+    xh, xa = f["x12_cur"][0], f["x12_cur"][2]
+    lc = f["line_c"]
+    if abs(lc) >= 0.5:
+        ok = ("home" if xh < xa else "away") == ("home" if lc < 0 else "away")
+        v.append((ok, f"เรต HDP ปัจจุบัน {fmt_line(lc)} ({'เจ้าบ้านต่อ' if lc < 0 else 'เจ้าบ้านรอง'}) "
+                      f"{'สอดคล้อง' if ok else 'ขัดแย้ง'}กับ 1X2 ปัจจุบัน ({xh:.2f} / {xa:.2f})"
+                      + ("" if ok else " -> ตรวจว่าสลับเหย้า/เยือนหรือไม่"))
+                 )
+    else:
+        v.append((True, f"เรต HDP ปัจจุบัน {fmt_line(lc)} (ปริ่มน้ำ/เสมอ) ใช้ 1X2 ปัจจุบัน {xh:.2f} / {xa:.2f} ประกอบ"))
+    al = m.get("ah_left_team")
+    if al:
+        if _same_team(al, home):
+            v.append((True, f"คอลัมน์ซ้ายของตาราง Asian Handicap = {al} (ตรงกับเจ้าบ้าน)"))
+        elif _same_team(al, away):
+            v.append((False, f"คอลัมน์ซ้ายของตาราง Asian Handicap = {al} ซึ่งเป็นทีมเยือน -> เรต HDP อาจถูกอ่านกลับด้าน"))
+    n = m.get("h2h_names_checked") or 0
+    if n:
+        bad = m.get("h2h_names_bad") or 0
+        v.append((bad == 0, f"H2H ตรวจชื่อทีมเหย้า/เยือนของแต่ละนัดแล้ว {n} นัด" + (f" (ไม่ตรง {bad} นัด)" if bad else " ครบถ้วน")))
+    return v
 
 
 def make_tags(f, P):
@@ -297,6 +388,19 @@ def make_tags(f, P):
             t.append("h2h:fav_dom")
         elif r <= -0.6:
             t.append("h2h:dog_dom")
+    if f["fav"] == "away":
+        t.append("home_dog")
+    for flag, name in (("high_draw", "draw_league"), ("continental", "continental"), ("false_giant", "false_giant"),
+                       ("shield24", "shield24"), ("home_momentum", "home_momentum")):
+        if f[flag]:
+            t.append(name)
+    if f["rank_gap"] is not None:
+        if f["rank_gap"] >= P["rank_gap_dog"]:
+            t.append("table:fav_below")
+        elif f["rank_gap"] <= -P["rank_gap_fav"]:
+            t.append("table:fav_above")
+    if f["league_size"] and f["rank_away"] and f["rank_away"] > P["bottom_zone"] * f["league_size"]:
+        t.append("away_bottom")
     if f["public_fav"] is not None and f["public_fav"] >= 65:
         t.append("public:fav")
     if f["public_dog"] is not None and f["public_dog"] >= 65:
@@ -438,7 +542,7 @@ def rule9(f, P):
     return out
 
 
-def rule17(f, P):
+def rule27(f, P):
     """Coupled Steam Confirmation: เรต HDP + พูล 1X2 + โบรกเกอร์ส่วนใหญ่ ไหลไปทางเดียวกัน
     โดยราคา (ปรับตามเรตแล้ว) ไม่แย่ลง และไม่มีหลักฐานมหาชนแห่หนัก -> ถือเป็นการไหลจริง หนุนฝั่งนั้น"""
     s = f["hdp_shift_fav"]
@@ -454,7 +558,7 @@ def rule17(f, P):
     agf = 0.8 if ag is None else 0.6 + 0.4 * ag
     val = min(abs(s) / 0.25, 2.0) * agf
     ag_txt = "" if ag is None else f", โบรกเกอร์ขยับทางเดียวกัน {ag:.0%}"
-    return [("R17", mk, val, f"Coupled Steam: เรต HDP {s:+g} + พูล 1X2 {nm} +{pp:.1f}pp{ag_txt} ยืนยันกัน (ค่าน้ำปรับตามเรตแล้วไม่แย่ลง)")]
+    return [("R27", mk, val, f"Coupled Steam: เรต HDP {s:+g} + พูล 1X2 {nm} +{pp:.1f}pp{ag_txt} ยืนยันกัน (ค่าน้ำปรับตามเรตแล้วไม่แย่ลง)")]
 
 
 def rule11(f, P):
@@ -492,7 +596,115 @@ def rule16(f, P):
     return []
 
 
-RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9, rule11, rule12, rule14, rule16, rule17]
+def rule17(f, P):
+    """Table Control: ลีกอัตราเสมอสูง -> คุมความเสี่ยงการถือหางทีมต่อ"""
+    if not f["high_draw"]:
+        return []
+    return [("R17", f["dog_hdp"], 0.5 if f["fav_line_c"] >= 0.75 else 0.3,
+             "ลีกอัตราเสมอสูง: คุมความเสี่ยงการถือหางทีมต่อ -> เอนไปทางทีมรอง")]
+
+
+def rule18(f, P):
+    """Table Control: อันดับบนตารางสวนทางกับราคา"""
+    g = f["rank_gap"]
+    if g is None:
+        return []
+    if g >= P["rank_gap_dog"] and not f["class_sup"]:
+        return [("R18", f["dog_hdp"], 0.6,
+                 f"Table Control: ทีมต่ออันดับ {f['rank_fav']} ต่ำกว่าทีมรองอันดับ {f['rank_dog']} -> ราคาสวนทางตาราง ระวังทีมต่อ")]
+    if g <= -P["rank_gap_fav"]:
+        return [("R18", f["fav_hdp"], 0.4,
+                 f"Table Control: ทีมต่ออันดับ {f['rank_fav']} เหนือทีมรองอันดับ {f['rank_dog']} มาก -> ราคาสอดคล้องตาราง")]
+    return []
+
+
+def rule19(f, P):
+    """Table Control: ทีมเยือนโซนท้ายตาราง"""
+    ls, ra = f["league_size"], f["rank_away"]
+    if not ls or ra is None or ra <= P["bottom_zone"] * ls:
+        return []
+    if f["fav"] == "away":
+        return [("R19", f["dog_hdp"], 0.8, f"ทีมเยือนอยู่โซนท้ายตาราง (อันดับ {ra:g}/{ls:g}) แต่เป็นทีมต่อ -> ไม่ถือหางทีมเยือน")]
+    return [("R19", f["fav_hdp"], 0.5, f"ทีมเยือนอยู่โซนท้ายตาราง (อันดับ {ra:g}/{ls:g}) พลังสวนกลับต่ำ")]
+
+
+def rule20(f, P):
+    """Draw-Prone League: ลีกเสมอสูง เอนไปทางสกอร์ต่ำ"""
+    if f["high_draw"] and f["has_ou"]:
+        return [("R20", "OU_UNDER", 0.4, "ลีกอัตราเสมอสูง -> เอนไปทางสกอร์ต่ำ")]
+    return []
+
+
+def rule21(f, P):
+    """Home Pride & Underdog Defensive Resurgence: ทีมรองเฝ้ารังในบ้าน"""
+    if f["fav"] != "away" or f["home_ga"] is None or f["home_ga"] > 1.2:
+        return []
+    out = [("R21", "HDP_HOME", 0.8, f"Home Pride: เจ้าบ้านเป็นทีมรองแต่เสียประตูเฉลี่ยเพียง {f['home_ga']:.2f} -> ให้เกียรติเกมรับเฝ้ารัง")]
+    if f["has_ou"]:
+        out.append(("R21", "OU_UNDER", 0.3, "เจ้าบ้านเกมรับเหนียว หนุนสกอร์ต่ำ"))
+    return out
+
+
+def rule22(f, P):
+    """High-Scoring League Volatility & Defensive Exposure Filter"""
+    if not f["high_scoring"]:
+        return []
+    out = []
+    if f["has_ou"]:
+        out.append(("R22", "OU_OVER", 0.6, "ลีกเปิดแลก/ประตูเยอะ -> มองสกอร์สูงควบคู่"))
+    if f["fav_line_c"] >= 1.0:
+        out.append(("R22", f["dog_hdp"], 0.8, f"ลีกประตูเยอะ + ต่อแพง {f['fav_line_c']:g} -> เลี่ยงเรตต่อแพง"))
+    if f["fav_ga"] is not None and f["fav_ga"] >= P["leak_ga"]:
+        out.append(("R22", f["dog_hdp"], 0.4, f"ทีมต่อเสียประตูเฉลี่ย {f['fav_ga']:.2f} (Defensive Exposure)"))
+    return out
+
+
+def rule23(f, P):
+    """Away Favorite Security Buffer in Balanced Tables"""
+    if f["fav"] == "away" and f["fav_line_c"] <= 0.5 and f["rank_gap"] is not None and abs(f["rank_gap"]) <= 4:
+        return [("R23", f["dog_hdp"], 0.8, f"ทีมเยือนต่อปริ่มน้ำ {f['fav_line_c']:g} ในตารางสูสี (ห่างกัน {abs(f['rank_gap']):g} อันดับ) -> ยกระดับตรวจสอบ")]
+    return []
+
+
+def rule24(f, P):
+    """Continental Cup Underdog Shield: ปิด Rule 14 เมื่อทีมเยือนมีสถิติสวนกลับสูง"""
+    if f["shield24"] and f["fav"] == "home":
+        return [("R24", f["dog_hdp"], 0.5, "Continental Cup Shield: ปิด Class Superiority Override ทีมเยือนมีสถิติสวนกลับ > 40%")]
+    return []
+
+
+def rule25(f, P):
+    """Home Momentum Over Market Value: เรต 0 + เจ้าบ้านไม่แพ้ในบ้าน 5 นัดและชนะ > 50%"""
+    if f["home_momentum"]:
+        return [("R25", "HDP_HOME", 2.0, "Home Momentum: เรตเสมอ เจ้าบ้านไม่แพ้ใน 5 นัดในบ้านและชนะ > 50% -> ห้ามสวนรอง (แบนฝั่งเยือน)")]
+    return []
+
+
+def rule26(f, P):
+    """The False Giant Slump Shield: ทีมต่อมูลค่าสูงแต่ฟอร์ม 5 นัดชนะ <= 20% -> ตัดสิทธิ์การต่อ"""
+    if f["false_giant"]:
+        return [("R26", f["dog_hdp"], 1.5,
+                 f"False Giant: ทีมต่อมูลค่าสูงกว่า {f['value_ratio']:.1f}x แต่ชนะเพียง {f['fav_win_rate']:.0f}% ใน 5 นัด -> ตัดสิทธิ์การต่อ (แบนถือหางทีมต่อ)")]
+    return []
+
+
+def rule28(f, P):
+    """Current Odds Anchor: อ่านเจตนาโต๊ะจาก 'ราคาปัจจุบัน' ล้วน ๆ (ค่าน้ำถูกกดต่ำกว่าอีกฝั่ง)"""
+    out, k = [], P["skew_min"]
+    d = f["dog_water_c"] - f["fav_water_c"]            # + = ค่าน้ำทีมต่อต่ำกว่า
+    if abs(d) >= k:
+        mk, nm = (f["fav_hdp"], f["fav_name"]) if d > 0 else (f["dog_hdp"], f["dog_name"])
+        out.append(("R28", mk, min(abs(d) / k, 2.0) * 0.5, f"Current Odds: ค่าน้ำ HDP ปัจจุบันของ {nm} ต่ำกว่าอีกฝั่ง {abs(d):.2f} (โต๊ะกดราคาฝั่งนี้)"))
+    if f["has_ou"]:
+        d = f["over_water_c"] - f["under_water_c"]       # + = ค่าน้ำ Under ต่ำกว่า
+        if abs(d) >= k:
+            mk = "OU_UNDER" if d > 0 else "OU_OVER"
+            out.append(("R28", mk, min(abs(d) / k, 2.0) * 0.5, f"Current Odds: ค่าน้ำ OU ปัจจุบันฝั่ง {mk[3:]} ต่ำกว่าอีกฝั่ง {abs(d):.2f}"))
+    return out
+
+
+RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9, rule11, rule12, rule14, rule16,
+         rule17, rule18, rule19, rule20, rule21, rule22, rule23, rule24, rule25, rule26, rule27, rule28]
 ROLE_TO_MARKET = lambda role, f: {
     "HDP_FAV": f["fav_hdp"], "HDP_DOG": f["dog_hdp"], "OU_OVER": "OU_OVER",
     "OU_UNDER": "OU_UNDER", "X12_FAV": f["fav_x12"]}[role]
@@ -509,10 +721,29 @@ class Store:
         self.hist_p = os.path.join(d, "history.json")
         self.state = self._load(self.state_p, {
             "weights": dict(DEFAULT_WEIGHTS), "rule_stats": {}, "learned_rules": [],
-            "params": {}, "meta": {"next_learned": 1}})
+            "params": {}, "meta": {"next_learned": 1, "schema": "5.9"}})
+        self._migrate()
         for k, v in DEFAULT_WEIGHTS.items():
             self.state["weights"].setdefault(k, v)
         self.history = self._load(self.hist_p, [])
+        if getattr(self, "_pending_migration", False):
+            for r in self.history:
+                for c in r.get("contribs", []):
+                    if c.get("rule") == "R17":
+                        c["rule"] = "R27"
+
+    def _migrate(self):
+        """V5.9 -> V5.9: R17 เดิม (Coupled Steam) ถูกเปลี่ยนเป็น R27 เพราะ R17-20 ในระบบ V5.9 เป็นกฎอื่น"""
+        meta = self.state.setdefault("meta", {"next_learned": 1})
+        if meta.get("schema") == "5.9":
+            return
+        w, rs = self.state.setdefault("weights", {}), self.state.setdefault("rule_stats", {})
+        if "R17" in w and "R27" not in w:
+            w["R27"] = w.pop("R17")
+        if "R17" in rs and "R27" not in rs:
+            rs["R27"] = rs.pop("R17")
+        meta["schema"] = "5.9"
+        self._pending_migration = True
 
     @staticmethod
     def _load(p, default):
@@ -564,38 +795,57 @@ def analyze_match(m, store):
         scores[mk] += eff
         contribs.append({"rule": rid, "market": mk, "raw": round(val, 4), "eff": round(eff, 4), "note": note})
 
-    # --- Veto (Rule 14 / Rule 16) ---
-    veto = set()
-    if f["class_sup"]:
-        veto.add(f["dog_hdp"])
+    # --- Veto (Rule 14 / 16 / 25 / 26) ---
+    veto = set(f.get("veto", []))
     if f["derby"] and f["has_ou"] and f["ou_c"] <= 2.5 and f["late_goal"]:
         veto.add("OU_UNDER")
 
+    sc = dict(scores)
+    for vk in veto:                                  # ฝั่งที่ถูกแบนห้ามนำคะแนนไปหักล้างอีกฝั่ง (ห้ามสวนเด็ดขาด)
+        if vk in sc:
+            sc[vk] = 0.0
     cands = []
-    net_h = scores["HDP_HOME"] - scores["HDP_AWAY"]
+    net_h = sc["HDP_HOME"] - sc["HDP_AWAY"]
     for side, v in (("HOME", net_h), ("AWAY", -net_h)):
         if v > 0 and f"HDP_{side}" not in veto:
             cands.append((f"HDP_{side}", v))
-        if v > 0 and f["fav_line_c"] <= 0.75 and f"X12_{side}" not in veto:
+        if v > 0 and f["fav_line_c"] <= 0.75 and f"X12_{side}" not in veto and f"HDP_{side}" not in veto:
             fac = 0.7 if side.lower() == f["fav"] else 0.45
             cands.append((f"X12_{side}", v * fac - 0.2))
     if f["has_ou"]:
-        net_o = scores["OU_OVER"] - scores["OU_UNDER"]
+        net_o = sc["OU_OVER"] - sc["OU_UNDER"]
         if net_o > 0 and "OU_OVER" not in veto:
             cands.append(("OU_OVER", net_o))
         if net_o < 0 and "OU_UNDER" not in veto:
             cands.append(("OU_UNDER", -net_o))
     cands = [c for c in cands if c[1] > 0]
+
+    # --- Current Odds Priority: สัญญาณที่มาจากการไหลของราคา (เทียบราคาเปิด) ล้วน ๆ ถูกลดน้ำหนัก ---
+    def cur_support(mk_):
+        base = mk_.replace("X12_", "HDP_") if mk_.startswith("X12_") else mk_
+        return sum(c["eff"] for c in contribs if c["market"] == base and c["rule"] not in MOVEMENT_RULES)
+    moved = set()
+    adj = []
+    for mk_, st_ in cands:
+        if cur_support(mk_) <= 1e-9:
+            st_ *= P["move_only_discount"]
+            moved.add(mk_)
+        adj.append((mk_, st_))
+    cands = adj
+
     if not cands:                                    # Rule 13 บังคับฟันธง: fallback = ทีมต่อ
         cands = [(f["fav_hdp"], 0.01)]
     cands.sort(key=lambda x: -x[1])
     mk, strength = cands[0]
     conf = 50 + 35 * (1 - math.exp(-strength / 3.0))
     tier = "สูง" if strength >= 2.5 else "กลาง" if strength >= 1.2 else "ต่ำ"
+    if f.get("verify_fail"):
+        tier = "ต่ำ"                                 # Home/Away Verification ไม่ผ่าน -> ไม่ให้ระดับสูง/กลาง
 
     price, label = pick_label(m, f, mk)
     pick = {"market": mk, "strength": round(strength, 3), "confidence": round(conf, 1), "tier": tier,
             "label": label, "price_win": price, "veto": sorted(veto),
+            "move_only": mk in moved, "verify_fail": bool(f.get("verify_fail")),
             "runner_up": [(c[0], round(c[1], 3)) for c in cands[1:3]]}
     return f, contribs, pick
 
@@ -627,41 +877,62 @@ def render_report(m, f, contribs, pick, store):
     L.append("=" * 64)
     L.append(f"⚽ {f['home']} vs {f['away']}  |  {f['league']}")
     L.append("=" * 64)
-    L.append("\n📊 วิเคราะห์เจาะลึก V5.8 Reality Check")
-    L.append(f"  • ทีมต่อ: {f['fav_name']} ({'เหย้า' if f['fav'] == 'home' else 'เยือน'})  เรตเปิด {fmt_line(f['line_o'])} -> ปัจจุบัน {fmt_line(f['line_c'])}"
-             f"  (ทีมต่อ{'แรงขึ้น' if f['hdp_shift_fav'] > 0 else 'อ่อนลง' if f['hdp_shift_fav'] < 0 else 'คงที่'} {f['hdp_shift_fav']:+g})")
+    L.append("\n📊 วิเคราะห์เจาะลึก V5.9 Reality Check")
+    L.append("  [1] Home/Away Verification Protocol")
+    for ok, txt in f["verify"]:
+        L.append(f"    {'✅' if ok else '❌'} {txt}")
+    if f["verify_fail"]:
+        L.append("    ⚠ การยืนยันเหย้า/เยือนไม่ผ่าน: ตรวจรูป/ไฟล์ JSON ก่อนเชื่อผลวิเคราะห์ (ระบบลดระดับสัญญาณเป็น 'ต่ำ')")
+    xc, xo = f["x12_cur"], f["x12_open"]
+    pc = implied(xc)
+    L.append("  [2] ราคาปัจจุบัน (Current/Live Odds = ราคาหลักที่ใช้ตัดสินใจ)")
+    L.append(f"    • 1X2: {xc[0]:.2f} / {xc[1]:.2f} / {xc[2]:.2f}  (โอกาสโดยนัย เหย้า {pc[0]:.0%} เสมอ {pc[1]:.0%} เยือน {pc[2]:.0%})")
+    hw = f["fav_water_c"] if f["fav"] == "home" else f["dog_water_c"]
+    aw = f["dog_water_c"] if f["fav"] == "home" else f["fav_water_c"]
+    L.append(f"    • HDP: {f['home']} {fmt_line(f['line_c'])} น้ำ {hw:.2f} | {f['away']} {fmt_line(-f['line_c'])} น้ำ {aw:.2f}"
+             f"  -> ทีมต่อ: {f['fav_name']} ({'เหย้า' if f['fav'] == 'home' else 'เยือน'})")
+    if f["has_ou"]:
+        L.append(f"    • OU: {f['ou_c']:g} น้ำสูง {f['over_water_c']:.2f} / ต่ำ {f['under_water_c']:.2f}")
+    L.append("  [3] การไหลของราคา (อ้างอิงเทียบราคาเปิดเท่านั้น)")
+    L.append(f"    • เรต HDP เปิด {fmt_line(f['line_o'])} -> ปัจจุบัน {fmt_line(f['line_c'])}  "
+             f"(ทีมต่อ{'แรงขึ้น' if f['hdp_shift_fav'] > 0 else 'อ่อนลง' if f['hdp_shift_fav'] < 0 else 'คงที่'} {f['hdp_shift_fav']:+g})")
     adj_txt = (f"  [ปรับตามเรตแล้ว: ทีมต่อ {-f['fav_drop_adj']:+.2f} / ทีมรอง {-f['dog_drop_adj']:+.2f}]"
                if abs(f["hdp_shift_fav"]) >= 0.01 else "")
-    L.append(f"  • ค่าน้ำทีมต่อ {f['fav_water_c']:.2f} (เปลี่ยน {-f['fav_drop']:+.2f}) | ทีมรอง {f['dog_water_c']:.2f} (เปลี่ยน {-f['dog_drop']:+.2f}){adj_txt}")
-    L.append(f"  • พูล 1X2 ทีมต่อ {f['x12_pp']:+.1f}pp | ทีมรอง {f['dog_pp']:+.1f}pp | ความขัดแย้งพูล↔HDP = {f['conflict']:.0%}"
+    L.append(f"    • ค่าน้ำทีมต่อเปลี่ยน {-f['fav_drop']:+.2f} | ทีมรองเปลี่ยน {-f['dog_drop']:+.2f}{adj_txt}")
+    L.append(f"    • พูล 1X2 ทีมต่อ {f['x12_pp']:+.1f}pp | ทีมรอง {f['dog_pp']:+.1f}pp | ความขัดแย้งพูล↔HDP = {f['conflict']:.0%}"
              f" {'(เกินเกณฑ์ 20%)' if f['conflict'] > P['decouple_threshold'] else '(ต่ำกว่าเกณฑ์ -> ถือเป็น noise)'}")
     if f["has_ou"]:
-        L.append(f"  • OU เรต {f['ou_o']:g} -> {f['ou_c']:g}  น้ำสูง {f['over_water_c']:.2f} / ต่ำ {f['under_water_c']:.2f}"
-                 + (f"  | ประตูรวมคาดการณ์ {f['exp_total']:.2f}" if f["exp_total"] else ""))
+        L.append(f"    • เรต OU เปิด {f['ou_o']:g} -> ปัจจุบัน {f['ou_c']:g}"
+                 + (f"  | ประตูรวมคาดการณ์จากสถิติ {f['exp_total']:.2f}" if f["exp_total"] else ""))
+    L.append("  [4] สถิติ & บริบท")
+    if f["rank_home"] is not None or f["rank_away"] is not None:
+        L.append(f"    • อันดับตาราง: {f['home']} {f['rank_home'] if f['rank_home'] is not None else '-'} | {f['away']} {f['rank_away'] if f['rank_away'] is not None else '-'}"
+                 + (f" (จาก {f['league_size']:g} ทีม)" if f["league_size"] else ""))
     if f["h2h_n"]:
-        L.append(f"  • H2H {f['h2h_n']} นัด: ทีมต่อชนะ {f['h2h_fav_w']} เสมอ {f['h2h_draw']} แพ้ {f['h2h_dog_w']}"
+        L.append(f"    • H2H {f['h2h_n']} นัด: ทีมต่อชนะ {f['h2h_fav_w']} เสมอ {f['h2h_draw']} แพ้ {f['h2h_dog_w']}"
                  + (f" | ประตูรวมเฉลี่ย {f['h2h_avg_total']:.1f}" if f["h2h_avg_total"] else ""))
     if f["value_ratio"]:
-        L.append(f"  • มูลค่าทีมต่อ/ทีมรอง = {f['value_ratio']:.1f}x")
+        L.append(f"    • มูลค่าทีมต่อ/ทีมรอง = {f['value_ratio']:.1f}x")
     fm = f.get("form")
     if fm and fm.get("home") and fm.get("away"):
         for t, nm in (("home", f["home"]), ("away", f["away"])):
             x = fm[t]
-            L.append(f"  • ฟอร์ม {nm}: {x.get('seq', '-')}  ได้ {x.get('gf', '-')} เสีย {x.get('ga', '-')}  ชนะ {x.get('win_rate', '-')}%")
+            L.append(f"    • ฟอร์ม {nm}: {x.get('seq', '-')}  ได้ {x.get('gf', '-')} เสีย {x.get('ga', '-')}  ชนะ {x.get('win_rate', '-')}%")
     if f.get("n_books"):
-        L.append(f"  • ราคารวมจาก {f['n_books']} โบรกเกอร์ (เรต=ฐานนิยม, ค่าน้ำ/ราคา=มัธยฐาน)")
-    L.append(f"  • Context tags: {', '.join(f['tags'])}")
+        L.append(f"    • ราคารวมจาก {f['n_books']} โบรกเกอร์ (เรต=ฐานนิยม, ค่าน้ำ/ราคา=มัธยฐาน)")
+    L.append(f"    • Context tags: {', '.join(f['tags'])}")
     L.append("\n  Rule ที่ทำงาน (คะแนนหลังคูณน้ำหนักที่เรียนรู้แล้ว):")
     if contribs:
         for c in sorted(contribs, key=lambda x: -x["eff"]):
             nm = RULE_NAMES.get(c["rule"], "Learned Rule")
             w = store.state["weights"].get(c["rule"], 1.0)
-            L.append(f"    [{c['rule']:<4}] {c['market']:<9} {c['eff']:+.2f} (w={w:.2f})  {nm}")
+            basis = "ไหลราคา" if c["rule"] in MOVEMENT_RULES else "ปัจจุบัน/บริบท"
+            L.append(f"    [{c['rule']:<4}] {c['market']:<9} {c['eff']:+.2f} (w={w:.2f}, {basis})  {nm}")
     else:
         L.append("    (ไม่มี Rule ใดทำงาน)")
 
-    L.append("\n🔍 ถอดรหัสเจตนาโต๊ะ")
-    keyr = [c for c in contribs if c["rule"] in ("R1", "R2", "R5", "R9", "R11", "R17") or c["rule"].startswith("L")]
+    L.append("\n🔍 ถอดรหัสเจตนาโต๊ะ (จากราคาปัจจุบัน)")
+    keyr = [c for c in contribs if c["rule"] in ("R1", "R2", "R5", "R9", "R11", "R27", "R28") or c["rule"].startswith("L")]
     if keyr:
         for c in keyr:
             L.append(f"  - {c['note']}")
@@ -669,10 +940,12 @@ def render_report(m, f, contribs, pick, store):
         L.append("  - ไม่พบความผิดปกติเด่นชัดของ Trap / Fake Steam ราคาเคลื่อนไหวอยู่ในกรอบปกติ")
 
     L.append("\n🎯 สัญญาณฟันธงเดี่ยว (Single Best Pick)")
-    L.append(f"  >>> {pick['label']} <<<")
+    L.append(f"  >>> {pick['label']} <<<   (ราคาปัจจุบัน)")
     L.append(f"  ความมั่นใจ: {pick['confidence']:.0f}%  (ระดับ{pick['tier']}, คะแนน {pick['strength']:.2f})")
     if pick["veto"]:
         L.append(f"  ตัวเลือกที่ถูกแบน (Veto): {', '.join(pick['veto'])}")
+    if pick.get("move_only"):
+        L.append("  ⚠ Current Odds Priority: สัญญาณนี้มาจากการไหลของราคา (เทียบราคาเปิด) ล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน ระบบลดคะแนนเหลือ 60% แล้ว")
     if pick["tier"] == "ต่ำ":
         L.append("  ⚠ สัญญาณอ่อน: โปรแกรมบังคับฟันธงตาม Rule 13 แต่ควรลดสัดส่วนเงินเดิมพัน")
     return "\n".join(L)
@@ -911,15 +1184,20 @@ EXTRACT_PROMPT = """คุณคือระบบสกัดข้อมูล
 7. form = ฟอร์ม 5 นัดหลังสุดของแต่ละทีมจากภาพสรุป: seq (เช่น "DLDWW"), gf (ประตูได้รวม), ga (ประตูเสียรวม), games (จำนวนนัด), win_rate (%)
 8. team_value = มูลค่าทีมที่แสดงใต้ชื่อทีม (ตัวเลขล้วน หน่วยเดียวกัน)
 9. context: ใส่ true เฉพาะเมื่อมีหลักฐานชัด (เช่น ดาร์บี้) นอกนั้น false; type เป็น league | cup | playoff
-10. warnings = รายการข้อความภาษาไทยของค่าที่อ่านไม่ชัด/ขัดแย้งกันระหว่างรูป (เช่น ลำดับฟอร์มในสองรูปไม่ตรงกัน)
+10. rank = อันดับบนตารางของแต่ละทีม (ตัวเลขในวงเล็บเหลี่ยม [ ] ข้างโลโก้ทีม) ; league_size = จำนวนทีมในลีก (null ถ้าไม่เห็น)
+    ah_left_team = ชื่อทีมที่อยู่คอลัมน์ซ้ายของตาราง Asian Handicap (ใช้ยืนยันว่าเรตมองจากเจ้าบ้านจริง)
+    h2h แต่ละนัดต้องใส่ home_team / away_team = ชื่อทีมเจ้าบ้าน (แถวบน) / ทีมเยือน (แถวล่าง) ของนัดนั้น
+11. warnings = รายการข้อความภาษาไทยของค่าที่อ่านไม่ชัด/ขัดแย้งกันระหว่างรูป (เช่น ลำดับฟอร์มในสองรูปไม่ตรงกัน)
 
 ตอบเป็น JSON ล้วน ไม่มีข้อความอื่น ไม่มี markdown ตามโครงสร้างนี้:
 """
 
 EXTRACT_SCHEMA = {
     "league": "...", "home": "...", "away": "...",
+    "rank": {"home": 0, "away": 0}, "league_size": None, "ah_left_team": "...",
     "context": {"type": "league", "derby": False, "high_volatility": False, "high_scoring_league": False,
-                "cup_group_stage": False, "knockout": False, "desperation": None, "late_goal_tendency": False},
+                "cup_group_stage": False, "knockout": False, "desperation": None, "late_goal_tendency": False,
+                "high_draw_league": False, "continental_cup": False},
     "books": [{
         "name": "bookmaker",
         "x12": {"open": [0.0, 0.0, 0.0], "current": [0.0, 0.0, 0.0]},
@@ -929,7 +1207,7 @@ EXTRACT_SCHEMA = {
                "current": {"line": 0.0, "over": 0.0, "under": 0.0}}}],
     "form": {"home": {"seq": "DLDWW", "gf": 0, "ga": 0, "games": 5, "win_rate": 0},
              "away": {"seq": "DLDWW", "gf": 0, "ga": 0, "games": 5, "win_rate": 0}},
-    "h2h": [{"hg": 0, "ag": 0, "home_is_current_home": True}],
+    "h2h": [{"home_team": "...", "away_team": "...", "hg": 0, "ag": 0, "home_is_current_home": True}],
     "team_value": {"home": 0, "away": 0},
     "warnings": ["..."],
 }
@@ -1111,6 +1389,28 @@ def validate_match(m):
         w.append("ไม่พบสถิติประตูได้/เสีย (Rule 3, 8 จะไม่ทำงาน)")
     m["context"] = {**{"type": "league"}, **{k: v for k, v in (m.get("context") or {}).items() if v is not None}}
     m["home"], m["away"] = m.get("home") or "Home", m.get("away") or "Away"
+    # Home/Away Verification: ยืนยันสิทธิ์เจ้าบ้านของแต่ละนัด H2H จากชื่อทีม (ถ้ามีชื่อ)
+    chk = bad = 0
+    for e in m["h2h"]:
+        ht, at = e.get("home_team"), e.get("away_team")
+        if not (ht and at):
+            continue
+        chk += 1
+        if _same_team(ht, m["home"]) or _same_team(at, m["away"]):
+            val = True
+        elif _same_team(ht, m["away"]) or _same_team(at, m["home"]):
+            val = False
+        else:
+            bad += 1
+            w.append(f"H2H {ht} vs {at}: ชื่อทีมไม่ตรงกับ {m['home']}/{m['away']} โปรดตรวจรูป")
+            continue
+        if e.get("home_is_current_home") is not None and e["home_is_current_home"] != val:
+            w.append(f"H2H {ht} vs {at}: แก้ home_is_current_home เป็น {val} ตามชื่อทีม")
+        e["home_is_current_home"] = val
+    m["h2h_names_checked"], m["h2h_names_bad"] = chk, bad
+    m["rank"] = {k: v for k, v in (m.get("rank") or {}).items() if _num(v)}
+    if not m["rank"]:
+        w.append("ไม่พบอันดับตาราง (Rule 18, 19, 23 จะไม่ทำงาน)")
     m["warnings"] = w
     return m, w
 
@@ -1274,7 +1574,7 @@ def cmd_stats(a):
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    ap = argparse.ArgumentParser(description="Football Quant V5.8 + Self-Learning Rule Engine")
+    ap = argparse.ArgumentParser(description="Football Quant V5.9 + Self-Learning Rule Engine")
     ap.add_argument("--data-dir", default="quant_data", help="โฟลเดอร์เก็บ state/history")
     sp = ap.add_subparsers(dest="cmd", required=True)
     p = sp.add_parser("analyze", help="วิเคราะห์แมตช์จากไฟล์ JSON")
