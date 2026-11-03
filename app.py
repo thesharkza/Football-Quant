@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Football Quant V5.8 — Streamlit UI (ใช้ engine จาก football_quant_v58.py)"""
+"""Football Quant V5.9 — Streamlit UI (ใช้ engine จาก football_quant_v58.py)"""
 import hmac
 import json
 import os
@@ -10,7 +10,7 @@ import streamlit as st
 
 import football_quant_v58 as q
 
-st.set_page_config(page_title="Football Quant V5.8", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="Football Quant V5.9", page_icon="⚽", layout="wide")
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
 
@@ -44,7 +44,7 @@ def secret(name):
 # ---------------------------------------------------------------- รหัสผ่าน (ถ้าตั้งไว้)
 _pw = secret("APP_PASSWORD")
 if _pw and not st.session_state.get("auth"):
-    st.title("⚽ Football Quant V5.8")
+    st.title("⚽ Football Quant V5.9")
     entered = st.text_input("รหัสผ่าน", type="password")
     if entered:
         if hmac.compare_digest(str(entered), str(_pw)):
@@ -75,12 +75,16 @@ with st.sidebar:
         "cup_group_stage": st.checkbox("บอลถ้วยรอบแบ่งกลุ่ม"),
         "knockout": st.checkbox("น็อคเอาต์/เพลย์ออฟ"),
         "late_goal_tendency": st.checkbox("แนวโน้มยิงท้ายเกมสูง"),
+        "high_draw_league": st.checkbox("ลีกอัตราเสมอสูง (Rule 17/20)"),
+        "continental_cup": st.checkbox("บอลถ้วยทวีป (Rule 24)"),
     }
+    league_size = st.number_input("จำนวนทีมในลีก (Rule 19 โซนท้ายตาราง)", 0, 40, 0,
+                                  help="0 = ไม่ระบุ (Rule 19 จะไม่ทำงาน)")
     desp = st.selectbox("Desperation (หนีตาย/ลุ้นแชมป์)", ["ไม่มี", "เจ้าบ้าน", "ทีมเยือน"])
     st.caption("⚠ บน Streamlit Cloud ไฟล์ในเครื่องจะหายเมื่อแอปรีสตาร์ท "
                "ให้สำรองข้อมูลที่แท็บ 💾 สำรอง/กู้คืน เป็นประจำ")
 
-st.title("⚽ Football Quant V5.8 — Self-Learning")
+st.title("⚽ Football Quant V5.9 — Self-Learning")
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 วิเคราะห์", "🏁 ใส่ผลจริง (เรียนรู้)", "📈 สถิติ & Rule", "💾 สำรอง/กู้คืน"])
 
 # ================================================================ TAB 1
@@ -141,6 +145,8 @@ with tab1:
                 st.error(f"ข้อมูลไม่ครบ/ไม่ถูกต้อง: {e}")
         if m is not None:
             m["context"].update({k: True for k, v in ctx_over.items() if v})
+            if league_size > 0:
+                m["league_size"] = int(league_size)
             if desp != "ไม่มี":
                 m["context"]["desperation"] = "home" if desp == "เจ้าบ้าน" else "away"
             store = q.Store(DATA_DIR)
