@@ -376,8 +376,12 @@ tab1, tab2, tab3, tab4 = st.tabs(["🎯 วิเคราะห์", "🏁 บ�
 
 # ================================================================ TAB 1
 with tab1:
+    ss.setdefault("up_ver", 0)            # เปลี่ยนเลขเวอร์ชันของ key = ล้างรูปที่อัปโหลดทิ้งทันที
     files = st.file_uploader("อัปโหลดรูป 5 รูป: ภาพสรุปแมตช์ · 1X2 · Handicap · Over/Under · H2H",
-                             type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True)
+                             type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True,
+                             key=f"uploader_{ss['up_ver']}")
+    if ss.pop("cleared_msg", False):
+        st.caption("🧹 ล้างรูปที่อัปโหลดออกแล้ว (ระบบไม่เก็บรูปไว้)")
     t1, t2 = st.columns(2)
     do_research = t1.toggle("ค้นหาบริบทแมตช์อัตโนมัติ", value=True, key="opt_research",
                             help="ให้ Gemini ค้นหาข้อมูลจริงทาง Google Search (คิดค่าบริการตามจำนวนคำค้น)")
@@ -393,6 +397,9 @@ with tab1:
             res = run_pipeline(files, opts, do_research, do_save, box)
             if res:
                 ss["res"] = res
+                ss["up_ver"] += 1             # วิเคราะห์สำเร็จ -> เคลียร์รูปทันที (ถ้าล้มเหลวจะคงรูปไว้ให้ลองใหม่)
+                ss["cleared_msg"] = True
+                st.rerun()
     if ss.get("res"):
         with box:
             render_result(ss["res"])
