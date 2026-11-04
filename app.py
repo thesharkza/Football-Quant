@@ -31,8 +31,7 @@ DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
-html, body, [class*="css"], .stMarkdown, button, input, textarea { font-family: 'Prompt', sans-serif !important; }
+html, body, [class*="css"], .stMarkdown, button, input, textarea { font-family: -apple-system, BlinkMacSystemFont, 'Sukhumvit Set', 'Thonburi', 'Noto Sans Thai', 'Segoe UI', Tahoma, sans-serif !important; }
 .stApp { background: radial-gradient(900px 420px at 12% -8%, rgba(20,184,166,.14), transparent 60%),
                      radial-gradient(800px 380px at 100% 0%, rgba(99,102,241,.13), transparent 55%),
                      linear-gradient(180deg, #0b1220 0%, #0d1526 100%); }
@@ -124,6 +123,9 @@ ul.ev { margin:10px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; lin
 .stTabs [aria-selected="true"] { background:rgba(20,184,166,.18) !important; }
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display:none; }
 [data-testid="stExpander"] { border:1px solid rgba(255,255,255,.08); border-radius:14px; background:rgba(255,255,255,.03); }
+.tbl { overflow-x:auto; } .tbl table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.tbl th { text-align:left; color:#8fa3c0; font-weight:600; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.12); }
+.tbl td { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.06); }
 @media (max-width: 640px) { .pick .lb { font-size:1.4rem; } .grid3 { gap:6px; } .team .nm { font-size:1rem; } }
 </style>
 """
@@ -149,6 +151,12 @@ def secret(name):
 
 def card(title, body):
     st.markdown(f'<div class="card"><h4>{esc(title)}</h4>{body}</div>', unsafe_allow_html=True)
+
+
+def html_table(headers, rows):
+    th = "".join(f"<th>{esc(h)}</th>" for h in headers)
+    tr = "".join("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in r) + "</tr>" for r in rows)
+    return f'<div class="tbl"><table><thead><tr>{th}</tr></thead><tbody>{tr}</tbody></table></div>'
 
 
 def chips_html(items):
@@ -517,14 +525,15 @@ with tab3:
                      f'<div>{tail}</div></div>')
         card("รายการล่าสุด", rows)
     with st.expander("น้ำหนัก Rule ปัจจุบัน"):
-        st.dataframe([{"Rule": k, "ชื่อ": q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"), "น้ำหนัก": round(v, 3),
-                       "ใช้(ครั้ง)": S["rule_stats"].get(k, {}).get("n", 0)} for k, v in sorted(S["weights"].items())],
-                     hide_index=True)
+        st.markdown(html_table(["Rule", "ชื่อ", "น้ำหนัก", "ใช้ (ครั้ง)"],
+                               [[k, q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"), f"{v:.3f}", S["rule_stats"].get(k, {}).get("n", 0)]
+                                for k, v in sorted(S["weights"].items())]), unsafe_allow_html=True)
     with st.expander(f"🧠 Rule ที่ระบบสร้างเอง ({len(S['learned_rules'])})"):
         if S["learned_rules"]:
-            st.dataframe([{"id": r["id"], "สถานะ": "เปิด" if r.get("enabled", True) else "ปิด",
-                           "เงื่อนไข": " + ".join(r["tags"]), "เล่น": q.ROLE_TH[r["role"]],
-                           "ชนะ": f"{r['wr']:.0%}", "จำนวนนัด": r["n"]} for r in S["learned_rules"]], hide_index=True)
+            st.markdown(html_table(["id", "สถานะ", "เงื่อนไข", "เล่น", "ชนะ", "นัด"],
+                                   [[r["id"], "เปิด" if r.get("enabled", True) else "ปิด", " + ".join(r["tags"]),
+                                     q.ROLE_TH[r["role"]], f"{r['wr']:.0%}", r["n"]] for r in S["learned_rules"]]),
+                        unsafe_allow_html=True)
         else:
             st.caption("ยังไม่มี — ต้องสะสมผลจริงอย่างน้อย ~10 นัดที่มีรูปแบบซ้ำกัน")
         if st.button("ค้นหา Rule ใหม่จากประวัติอีกครั้ง"):
