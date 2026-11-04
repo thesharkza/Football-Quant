@@ -9,10 +9,24 @@ import time
 
 import streamlit as st
 
-import football_quant_v58 as q
-
 st.set_page_config(page_title="Football Quant", page_icon="⚽", layout="centered",
                    initial_sidebar_state="collapsed")
+
+# ---- หน้าตรวจสอบระบบ: เปิดด้วยการเติม ?diag=1 ท้ายลิงก์ (ไม่แสดงข้อมูลลับ) ----
+if st.query_params.get("diag") == "1":
+    import platform
+    st.write("✅ เซิร์ฟเวอร์ Streamlit ทำงาน และส่งหน้านี้ถึงเบราว์เซอร์ได้")
+    st.write(f"Streamlit {st.__version__} · Python {platform.python_version()}")
+    try:
+        import football_quant_v58 as _q
+        st.write(f"✅ โหลดตัวคำนวณได้ (Rule {len(_q.RULES)} ข้อ)")
+    except Exception as _e:  # noqa
+        st.write(f"❌ โหลดตัวคำนวณไม่ได้: {str(_e)[:200]}")
+    st.write("ถ้าเห็นหน้านี้ แสดงว่าปัญหาอยู่ที่ส่วนหน้าตา/การแสดงผลของแอปหลัก ไม่ใช่เซิร์ฟเวอร์หรือเครือข่าย")
+    st.stop()
+
+import football_quant_v58 as q
+
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
 CSS = """
@@ -113,7 +127,8 @@ ul.ev { margin:10px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; lin
 @media (max-width: 640px) { .pick .lb { font-size:1.4rem; } .grid3 { gap:6px; } .team .nm { font-size:1rem; } }
 </style>
 """
-st.markdown(CSS, unsafe_allow_html=True)
+if st.query_params.get("plain") != "1":      # ?plain=1 = ปิดการตกแต่ง CSS (ไว้ทดสอบ)
+    st.markdown(CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- เครื่องมือช่วย
