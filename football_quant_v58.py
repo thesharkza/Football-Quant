@@ -1323,6 +1323,113 @@ def extract_from_images(paths, model, api_key):
     return parse_json_reply(text)
 
 
+RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข้อมูลฟุตบอล ใช้ Google Search ค้นหาข้อมูลล่าสุด เพื่อกำหนด "บริบทแมตช์" ของคู่นี้:
+เจ้าบ้าน: @HOME@
+ทีมเยือน: @AWAY@
+รายการแข่งขัน: @LEAGUE@
+วันนี้: @TODAY@ (แมตช์คือนัดที่จะแข่งในอีกไม่กี่ชั่วโมง/วันข้างหน้า)
+
+กติกา:
+1. ใช้เฉพาะข้อมูลที่ค้นเจอจริง ห้ามเดา ถ้าไม่พบหรือไม่แน่ใจให้ใส่ null (สำหรับตัวเลข/ข้อความ) หรือ false (สำหรับ flag ที่ไม่มีหลักฐาน)
+2. derby = true เมื่อเป็นคู่ปรับ/ดาร์บี้ที่มีชื่อเรียกหรือแหล่งข้อมูลยืนยัน
+3. competition.type: league | cup | playoff ; cup_group_stage = ถ้วยรอบแบ่งกลุ่ม ; knockout = รอบน็อคเอาต์/เพลย์ออฟ ; continental_cup = ถ้วยระดับทวีป (เช่น Champions League, Libertadores, AFC)
+4. league.avg_goals_per_match = ค่าเฉลี่ยประตูรวมต่อนัดของลีกในซีซันนี้ ; high_scoring = true ถ้า >= 2.9
+   league.draw_rate_pct = สัดส่วนเสมอ (%) ของลีกซีซันนี้ ; high_draw = true ถ้า >= 28
+   league.size = จำนวนทีมในลีก ; high_volatility = true เฉพาะเมื่อมีหลักฐานว่าลีกผลไม่แน่นอนมาก (ปกติ false)
+5. standings = อันดับล่าสุดของแต่ละทีมในตาราง (ตัวเลข)
+6. motivation.desperation = "home" หรือ "away" เฉพาะทีมที่กำลังหนีตก/ลุ้นแชมป์/ลุ้นโควตาในช่วงท้ายฤดูกาลอย่างชัดเจน ไม่เช่นนั้น null
+7. home_form_home = ผลเกมเหย้า 5 นัดหลังสุดของเจ้าบ้าน (ลีกเดียวกัน) เป็น {"w":..,"d":..,"l":..} รวมต้องเท่ากับ 5 ไม่ครบ/ไม่ชัวร์ให้ null
+8. late_goal_tendency = true เฉพาะเมื่อมีสถิติว่า 2 ทีมยิงประตูช่วงท้ายเกมบ่อยชัดเจน ไม่เช่นนั้น false
+9. evidence = ข้อความสั้นภาษาไทยไม่เกิน 6 ข้อ บอกหลักฐานสำคัญของแต่ละ flag ที่เป็น true
+10. confidence = high | medium | low
+
+ตอบเป็น JSON ล้วน ไม่มีข้อความอื่น ไม่มี markdown ตามโครงสร้างนี้:
+{"competition":{"type":"league","name":"...","cup_group_stage":false,"knockout":false,"continental_cup":false},
+ "derby":false,"derby_reason":null,
+ "league":{"size":null,"avg_goals_per_match":null,"draw_rate_pct":null,"high_scoring":false,"high_draw":false,"high_volatility":false},
+ "standings":{"home_rank":null,"away_rank":null},
+ "motivation":{"desperation":null,"reason":null},
+ "home_form_home":null,"late_goal_tendency":false,
+ "evidence":["..."],"confidence":"medium"}"""
+
+
+def research_context(home, away, league, model, api_key, today=None):
+    """ให้ Gemini ค้นหาข้อมูลจริงผ่าน Google Search เพื่อกำหนดบริบทแมตช์ คืน (dict ผลวิจัย, แหล่งข้อมูล, คำค้น)"""
+    if not str(model).lower().startswith("gemini"):
+        sys.exit(f"รองรับเฉพาะโมเดล Gemini (ได้รับ '{model}')")
+    prompt = (RESEARCH_PROMPT.replace("@HOME@", str(home)).replace("@AWAY@", str(away))
+              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or time.strftime("%Y-%m-%d")))
+    data = _post_json(GEMINI_URL.format(model=model),
+                      {"content-type": "application/json", "x-goog-api-key": api_key},
+                      {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                       "tools": [{"google_search": {}}],
+                       "generationConfig": {"maxOutputTokens": 4096}})
+    cands = data.get("candidates") or []
+    if not cands:
+        sys.exit("Gemini ไม่ส่งผลการค้นหากลับมา")
+    cand = cands[0]
+    text = "".join(pt.get("text", "") for pt in cand.get("content", {}).get("parts", []) if not pt.get("thought"))
+    gm = cand.get("groundingMetadata") or {}
+    sources, seen = [], set()
+    for ch in gm.get("groundingChunks") or []:
+        web = ch.get("web") or {}
+        key = web.get("title") or web.get("uri")
+        if key and key not in seen:
+            seen.add(key)
+            sources.append({"title": web.get("title") or "", "uri": web.get("uri") or ""})
+    return parse_json_reply(text), sources, list(gm.get("webSearchQueries") or [])
+
+
+def _bool(v):
+    return v if isinstance(v, bool) else None
+
+
+def apply_research(m, r, sources=None, queries=None):
+    """นำผลวิจัยบริบทมาใส่ในข้อมูลแมตช์ (ตรวจชนิดข้อมูลทุกช่อง เติมเฉพาะค่าที่ยังไม่มี)"""
+    if not isinstance(r, dict):
+        return m
+    ctx = m.get("context") if isinstance(m.get("context"), dict) else {}
+    m["context"] = ctx
+    comp = r.get("competition") if isinstance(r.get("competition"), dict) else {}
+    if comp.get("type") in ("league", "cup", "playoff"):
+        ctx["type"] = comp["type"]
+    for k in ("cup_group_stage", "knockout", "continental_cup"):
+        if _bool(comp.get(k)) is not None:
+            ctx[k] = comp[k]
+    if _bool(r.get("derby")) is not None:
+        ctx["derby"] = r["derby"]
+    lg = r.get("league") if isinstance(r.get("league"), dict) else {}
+    for src, dst in (("high_scoring", "high_scoring_league"), ("high_draw", "high_draw_league"),
+                     ("high_volatility", "high_volatility")):
+        if _bool(lg.get(src)) is not None:
+            ctx[dst] = lg[src]
+    if _num(lg.get("size")) and 8 <= lg["size"] <= 40 and not _num(m.get("league_size")):
+        m["league_size"] = int(lg["size"])
+    stn = r.get("standings") if isinstance(r.get("standings"), dict) else {}
+    rk = m.get("rank") if isinstance(m.get("rank"), dict) else {}
+    for side in ("home", "away"):
+        if not _num(rk.get(side)) and _num(stn.get(side + "_rank")):
+            rk[side] = stn[side + "_rank"]
+    m["rank"] = rk
+    mo = r.get("motivation") if isinstance(r.get("motivation"), dict) else {}
+    if mo.get("desperation") in ("home", "away"):
+        ctx["desperation"] = mo["desperation"]
+    if _bool(r.get("late_goal_tendency")) is not None:
+        ctx["late_goal_tendency"] = r["late_goal_tendency"]
+    hf = r.get("home_form_home")
+    if isinstance(hf, dict) and all(isinstance(hf.get(k), int) and not isinstance(hf.get(k), bool) for k in ("w", "d", "l")) \
+            and hf["w"] + hf["d"] + hf["l"] == 5 and not m.get("home_form_home"):
+        m["home_form_home"] = {k: hf[k] for k in ("w", "d", "l")}
+    ev = [str(x) for x in (r.get("evidence") or []) if x][:6] if isinstance(r.get("evidence"), list) else []
+    m["research"] = {"evidence": ev, "sources": (sources or [])[:8], "queries": (queries or [])[:6],
+                     "confidence": r.get("confidence") if r.get("confidence") in ("high", "medium", "low") else None,
+                     "derby_reason": r.get("derby_reason"), "desperation_reason": mo.get("reason"),
+                     "avg_goals": lg.get("avg_goals_per_match") if _num(lg.get("avg_goals_per_match")) else None,
+                     "draw_rate": lg.get("draw_rate_pct") if _num(lg.get("draw_rate_pct")) else None,
+                     "competition": comp.get("name")}
+    return m
+
+
 def parse_json_reply(text):
     i, j = text.find("{"), text.rfind("}")
     if i < 0 or j < 0:
@@ -1425,6 +1532,15 @@ def cmd_images(a):
         print(f"⚠ ได้รับ {len(a.images)} รูป (ปกติใช้ 5 รูป) จะดำเนินการต่อ")
     print(f"🖼  กำลังอ่าน {len(a.images)} รูปด้วย {a.model} ...")
     m = extract_from_images(a.images, a.model, key)
+    if not a.no_research:
+        print("🔎 ค้นหาข้อมูลบริบทแมตช์ด้วย Gemini + Google Search ...")
+        try:
+            r, srcs, qs = research_context(m.get("home"), m.get("away"), m.get("league"), a.model, key)
+            apply_research(m, r, srcs, qs)
+            for e_ in (m.get("research") or {}).get("evidence", []):
+                print(f"   - {e_}")
+        except SystemExit as e_:
+            print(f"   (ข้ามการค้นหาบริบท: {e_})")
     try:
         m, warns = validate_match(m)
     except ValueError as e:
@@ -1588,6 +1704,7 @@ def main():
     p.add_argument("--save-json", help="ที่เก็บ JSON ที่สกัดได้")
     p.add_argument("--extract-only", action="store_true", help="สกัดข้อมูลอย่างเดียว ไม่วิเคราะห์")
     p.add_argument("--yes", action="store_true", help="ข้ามการถามยืนยัน")
+    p.add_argument("--no-research", action="store_true", help="ไม่ค้นหาบริบทแมตช์อัตโนมัติ")
     p.add_argument("--no-save", action="store_true")
     p.add_argument("--league-type", choices=["league", "cup", "playoff"])
     p.add_argument("--desperation", choices=["home", "away"])
