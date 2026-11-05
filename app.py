@@ -195,24 +195,64 @@ CTX_LABELS = [("derby", "ดาร์บี้"), ("high_scoring_league", "ล�
 TYPE_TH = {"league": "ลีก", "cup": "ถ้วย", "playoff": "เพลย์ออฟ"}
 
 
-# ---------------------------------------------------------------- รหัสผ่าน (ถ้าตั้งไว้)
+# ---------------------------------------------------------------- รหัสผ่าน + หมดเวลาเมื่อไม่ได้ใช้งาน
 _pw = secret("APP_PASSWORD")
-if _pw and not st.session_state.get("auth"):
-    st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Football Quant</div>'
-                '<div class="s">กรุณาใส่รหัสผ่านเพื่อเข้าใช้งาน</div></div></div>', unsafe_allow_html=True)
-    entered = st.text_input("รหัสผ่าน", type="password", label_visibility="collapsed", placeholder="รหัสผ่าน")
-    if entered:
-        if hmac.compare_digest(str(entered), str(_pw)):
-            st.session_state["auth"] = True
-            st.rerun()
-        else:
-            st.error("รหัสผ่านไม่ถูกต้อง")
-    st.stop()
+try:
+    IDLE_SEC = 60 * max(1, int(secret("SESSION_MINUTES") or 10))
+except ValueError:
+    IDLE_SEC = 600
+
+
+def _clear_token_param():
+    if "s" in st.query_params:
+        del st.query_params["s"]
+
+
+if _pw:
+    # โทเค็นอยู่ในลิงก์ (?s=...) จึงรอดเมื่อมือถือพับแอป/เชื่อมต่อใหม่ แต่หมดอายุทันทีเมื่อเว้นว่างเกินเวลา
+    _tok = st.session_state.get("tok") or st.query_params.get("s")
+    if _tok and q.session_touch(_tok, IDLE_SEC):
+        st.session_state["tok"] = _tok
+        if st.query_params.get("s") != _tok:
+            st.query_params["s"] = _tok
+    else:
+        st.session_state.pop("tok", None)
+        _clear_token_param()
+        st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Football Quant</div>'
+                    '<div class="s">กรุณาใส่รหัสผ่านเพื่อเข้าใช้งาน</div></div></div>', unsafe_allow_html=True)
+        if _tok:
+            st.info(f"หมดเวลาเพราะไม่ได้ใช้งานเกิน {IDLE_SEC // 60} นาที กรุณาใส่รหัสผ่านใหม่")
+        entered = st.text_input("รหัสผ่าน", type="password", label_visibility="collapsed", placeholder="รหัสผ่าน")
+        if entered:
+            if hmac.compare_digest(str(entered), str(_pw)):
+                _new = q.session_new()
+                st.session_state["tok"] = _new
+                st.query_params["s"] = _new
+                st.rerun()
+            else:
+                st.error("รหัสผ่านไม่ถูกต้อง")
+        st.stop()
+
+
+@st.fragment(run_every=15)
+def idle_guard():
+    """ตรวจเบื้องหลังทุก 15 วินาที: ถ้าเกินเวลาไม่ได้ใช้งาน ให้กลับหน้าใส่รหัสผ่านทันที (ไม่ต่ออายุเอง)"""
+    if not q.session_alive(st.session_state.get("tok"), IDLE_SEC):
+        st.rerun()
+
 
 st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Football Quant'
             '<span class="pill">V5.9</span></div><div class="s">วิเคราะห์ราคาบอลอัตโนมัติ · ฟันธงเดี่ยว · เรียนรู้จากผลจริง</div></div></div>',
             unsafe_allow_html=True)
 ss = st.session_state
+if _pw:
+    idle_guard()
+    _c1, _c2 = st.columns([5, 1])
+    if _c2.button("ออกจากระบบ", key="logout"):
+        q.session_revoke(ss.get("tok"))
+        ss.pop("tok", None)
+        _clear_token_param()
+        st.rerun()
 
 
 # ---------------------------------------------------------------- ตัวประมวลผลหลัก
@@ -239,7 +279,7 @@ def make_result(m, opts, ext_warn=(), research_err=None, save=True):
     f, contribs, pick = q.analyze_match(m, store)
     saved = None
     if save:
-        saved = q.record_prediction(store, m, f, contribs, pick)
+        saved = q.record_prediction(store, m, f, contribs, pick, warns)
     return {"m": m, "f": f, "contribs": contribs, "pick": pick, "warns": list(ext_warn) + warns,
             "research_err": research_err, "saved": saved, "report": q.render_report(m, f, contribs, pick, store)}
 
@@ -289,8 +329,30 @@ def run_pipeline(files, opts, do_research, save, box):
     return None
 
 
+_F_DEFAULTS = {"rank_home": None, "rank_away": None, "league_size": None, "verify": [], "verify_fail": False,
+               "fav_drop_adj": 0.0, "dog_drop_adj": 0.0, "value_ratio": None, "conflict": 0.0, "x12_pp": 0.0,
+               "hdp_shift_fav": 0.0, "has_ou": False, "form": None}
+
+
+def res_from_record(rec, store):
+    f = {**_F_DEFAULTS, **rec["features"]}
+    m = dict(rec.get("match") or {})
+    if not m:                                   # รายการเก่าที่ยังไม่ได้เก็บข้อมูลแมตช์ทั้งก้อน
+        m = {"context": {"type": f.get("ctx_type", "league"), "derby": f.get("derby"), "high_volatility": f.get("high_vol"),
+                         "high_scoring_league": f.get("high_scoring"), "cup_group_stage": f.get("cup_group"),
+                         "knockout": f.get("knockout"), "continental_cup": f.get("continental"),
+                         "high_draw_league": f.get("high_draw"), "late_goal_tendency": f.get("late_goal"),
+                         "desperation": f.get("desperation")}, "form": f.get("form")}
+    try:
+        report = q.render_report(m, f, rec["contribs"], rec["pick"], store)
+    except Exception:  # noqa
+        report = "(รายงานฉบับเต็มไม่พร้อมใช้งานสำหรับรายการเก่านี้)"
+    return {"m": m, "f": f, "contribs": rec["contribs"], "pick": rec["pick"], "warns": rec.get("warns", []),
+            "research_err": None, "saved": None, "report": report}
+
+
 # ---------------------------------------------------------------- แสดงผลลัพธ์
-def render_result(res):
+def render_result(res, after_pick=None):
     m, f, contribs, pick = res["m"], res["f"], res["contribs"], res["pick"]
     rs = m.get("research") or {}
     tv = m.get("team_value") or {}
@@ -325,6 +387,8 @@ def render_result(res):
         f'<div class="flags">{"".join(f"<span class=flag>{esc(x)}</span>" for x in flags)}</div></div>',
         unsafe_allow_html=True)
     st.caption("ความมั่นใจนี้แปลงจากคะแนนสัญญาณ ยังไม่ผ่านการสอบเทียบกับผลจริง ไม่ใช่ความน่าจะเป็นที่แท้จริง")
+    if after_pick:
+        after_pick()
 
     # ราคาปัจจุบัน
     xc = f["x12_cur"]
@@ -483,33 +547,35 @@ with tab2:
                            format_func=lambda i: f"{pend[i]['features']['home']} vs {pend[i]['features']['away']} — {pend[i]['pick']['label']}")
         rec = pend[rid]
         fe = rec["features"]
-        card("สัญญาณที่ฟันธงไว้", f'<div class="row"><span class="l">{esc(fe["home"])} vs {esc(fe["away"])}</span>'
-             f'<span class="r">{esc(rec["pick"]["label"])}</span></div>')
-        c1, c2 = st.columns(2)
-        hg = c1.number_input(f"ประตู {fe['home']}", 0, 30, 0)
-        ag = c2.number_input(f"ประตู {fe['away']}", 0, 30, 0)
-        if st.button("✅ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
-            outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
-            cls = "win" if r > 0 else "lose" if r < 0 else "push"
-            st.markdown(f'<div class="res {cls}">{esc(fe["home"])} {int(hg)}-{int(ag)} {esc(fe["away"])} · '
-                        f'{esc(rec["pick"]["label"])} → {q.result_word(r)} ({pf:+.2f} หน่วย)</div>', unsafe_allow_html=True)
-            card("ผลของแต่ละตลาด", "".join(
-                f'<div class="row"><span class="l">{esc(market_th(k, fe))}</span><span class="r">{q.result_word(v[0])}</span></div>'
-                for k, v in outcomes.items()))
-            if changes:
-                card("ระบบปรับน้ำหนัก Rule", "".join(
-                    f'<div class="row"><span class="l">{esc(q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"))}</span>'
-                    f'<span class="r {"up" if n > o else "down" if n < o else "flat"}">{o:.2f} → {n:.2f}</span></div>'
-                    for k, (o, n, rr) in changes.items()))
-            cloud_warn()
-            for r_ in new:
-                st.success(f"🧠 ระบบสร้าง Rule ใหม่ {r_['id']}: [{' + '.join(r_['tags'])}] → {q.ROLE_TH[r_['role']]} "
-                           f"(ชนะ {r_['wr']:.0%} จาก {r_['n']} นัด)")
-        with st.expander("🗑 ลบรายการนี้ (ถ้าไม่ต้องการ)"):
-            sure = st.checkbox("ยืนยันลบรายการที่เลือกอยู่", key=f"del_{rid}")
-            if st.button("ลบรายการนี้", disabled=not sure):
-                q.delete_records(store, [rid])
-                st.rerun()
+
+        def settle_ui():
+            c1, c2 = st.columns(2)
+            hg = c1.number_input(f"ประตู {fe['home']}", 0, 30, 0)
+            ag = c2.number_input(f"ประตู {fe['away']}", 0, 30, 0)
+            if st.button("✅ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
+                outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
+                cls = "win" if r > 0 else "lose" if r < 0 else "push"
+                st.markdown(f'<div class="res {cls}">{esc(fe["home"])} {int(hg)}-{int(ag)} {esc(fe["away"])} · '
+                            f'{esc(rec["pick"]["label"])} → {q.result_word(r)} ({pf:+.2f} หน่วย)</div>', unsafe_allow_html=True)
+                card("ผลของแต่ละตลาด", "".join(
+                    f'<div class="row"><span class="l">{esc(market_th(k, fe))}</span><span class="r">{q.result_word(v[0])}</span></div>'
+                    for k, v in outcomes.items()))
+                if changes:
+                    card("ระบบปรับน้ำหนัก Rule", "".join(
+                        f'<div class="row"><span class="l">{esc(q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"))}</span>'
+                        f'<span class="r {"up" if n > o else "down" if n < o else "flat"}">{o:.2f} → {n:.2f}</span></div>'
+                        for k, (o, n, rr) in changes.items()))
+                cloud_warn()
+                for r_ in new:
+                    st.success(f"🧠 ระบบสร้าง Rule ใหม่ {r_['id']}: [{' + '.join(r_['tags'])}] → {q.ROLE_TH[r_['role']]} "
+                               f"(ชนะ {r_['wr']:.0%} จาก {r_['n']} นัด)")
+            with st.expander("🗑 ลบรายการนี้ (ถ้าไม่ต้องการ)"):
+                sure = st.checkbox("ยืนยันลบรายการที่เลือกอยู่", key=f"del_{rid}")
+                if st.button("ลบรายการนี้", disabled=not sure):
+                    q.delete_records(store, [rid])
+                    st.rerun()
+
+        render_result(res_from_record(rec, store), after_pick=settle_ui)
 
 # ================================================================ TAB 3
 with tab3:
