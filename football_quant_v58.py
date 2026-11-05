@@ -1338,14 +1338,58 @@ TEMPLATE = {
 }
 
 
-def record_prediction(store, m, f, contribs, pick):
+import secrets as _secrets
+import threading as _threading
+
+SESSIONS = {}                                  # token -> เวลาใช้งานล่าสุด (เก็บในหน่วยความจำของเซิร์ฟเวอร์)
+_SESS_LOCK = _threading.Lock()
+
+
+def session_new():
+    tok = _secrets.token_urlsafe(24)
+    now = time.time()
+    with _SESS_LOCK:
+        for k in [k for k, t in SESSIONS.items() if now - t > 3600]:      # ล้างโทเค็นเก่า
+            SESSIONS.pop(k, None)
+        SESSIONS[tok] = now
+    return tok
+
+
+def session_touch(tok, idle_sec):
+    """ต่ออายุถ้ายังไม่เกินเวลา idle คืน True; ถ้าเกิน/ไม่มี ลบโทเค็นแล้วคืน False"""
+    if not tok:
+        return False
+    with _SESS_LOCK:
+        t, now = SESSIONS.get(tok), time.time()
+        if t is None or now - t > idle_sec:
+            SESSIONS.pop(tok, None)
+            return False
+        SESSIONS[tok] = now
+        return True
+
+
+def session_alive(tok, idle_sec):
+    """ตรวจอย่างเดียว ไม่ต่ออายุ (ใช้ตัวจับเวลาเบื้องหลัง)"""
+    with _SESS_LOCK:
+        t = SESSIONS.get(tok) if tok else None
+        return t is not None and time.time() - t <= idle_sec
+
+
+def session_revoke(tok):
+    with _SESS_LOCK:
+        SESSIONS.pop(tok, None)
+
+
+def record_prediction(store, m, f, contribs, pick, warns=None):
     """บันทึกสัญญาณลงประวัติ (สถานะ pending) คืน (id, บันทึกสำเร็จหรือไม่)"""
     mid = m.get("id") or slug(f"{f['home']}-vs-{f['away']}-{time.strftime('%Y%m%d-%H%M')}")
     store.history = [r for r in store.history if not (r["id"] == mid and r["status"] == "pending")]
     if any(r["id"] == mid for r in store.history):
         return mid, False
     store.history.append({"id": mid, "created": time.strftime("%Y-%m-%d %H:%M"), "status": "pending",
-                          "features": f, "contribs": contribs, "pick": pick})
+                          "features": f, "contribs": contribs, "pick": pick,
+                          "match": {k: v for k, v in m.items() if k not in ("books", "warnings")},   # ไว้แสดงการ์ดเดิมในหน้าบันทึกผล
+                          "warns": list(warns or [])})
     store.save()
     return mid, True
 
