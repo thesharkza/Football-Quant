@@ -149,6 +149,18 @@ def secret(name):
     return v or None
 
 
+for _k in ("SHEETS_URL", "SHEETS_TOKEN", "GITHUB_TOKEN", "GIST_ID"):          # ส่งค่าจาก Secrets ให้ตัวซิงก์ข้อมูล
+    _v = secret(_k)
+    if _v:
+        os.environ[_k] = _v
+
+
+def cloud_warn():
+    rs = q.REMOTE_STATE
+    if rs.get("enabled") and rs.get("ok") is False:
+        st.warning(f"บันทึกในเครื่องแล้ว แต่ซิงก์ขึ้นคลาวด์ไม่สำเร็จ: {rs.get('error')}")
+
+
 def card(title, body):
     st.markdown(f'<div class="card"><h4>{esc(title)}</h4>{body}</div>', unsafe_allow_html=True)
 
@@ -392,6 +404,7 @@ def render_result(res):
         mid, ok = res["saved"]
         st.success("บันทึกสัญญาณแล้ว → ใส่ผลจริงที่แท็บ “บันทึกผล” หลังจบเกม" if ok
                    else "ไม่บันทึก: รายการนี้ถูกบันทึกผลไปแล้ว")
+        cloud_warn()
 
 
 # ---------------------------------------------------------------- แท็บ
@@ -488,6 +501,7 @@ with tab2:
                     f'<div class="row"><span class="l">{esc(q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"))}</span>'
                     f'<span class="r {"up" if n > o else "down" if n < o else "flat"}">{o:.2f} → {n:.2f}</span></div>'
                     for k, (o, n, rr) in changes.items()))
+            cloud_warn()
             for r_ in new:
                 st.success(f"🧠 ระบบสร้าง Rule ใหม่ {r_['id']}: [{' + '.join(r_['tags'])}] → {q.ROLE_TH[r_['role']]} "
                            f"(ชนะ {r_['wr']:.0%} จาก {r_['n']} นัด)")
@@ -552,9 +566,51 @@ with tab3:
 # ================================================================ TAB 4
 with tab4:
     store = q.Store(DATA_DIR)
-    card("สำรองข้อมูลการเรียนรู้",
-         '<div class="muted">เก็บน้ำหนัก Rule, Rule ที่ระบบสร้างเอง และประวัติทั้งหมดเป็นไฟล์เดียว '
-         'บน Streamlit Cloud ข้อมูลจะหายเมื่อแอปรีสตาร์ท ควรสำรองหลังบันทึกผลทุกครั้ง</div>')
+    rs = q.REMOTE_STATE
+    be = q.remote_backend()
+    cfg_ok = be is not None
+    be_name = {"sheets": "Google Sheets", "gist": "GitHub Gist"}.get(be, "")
+    if not cfg_ok:
+        chip = ("ยังไม่ได้เปิดซิงก์ · ข้อมูลจะหายเมื่อแอปรีสตาร์ท", "bad")
+    elif rs.get("ok") is False:
+        chip = (f"ซิงก์มีปัญหา: {rs.get('error')}", "bad")
+    else:
+        chip = (f"เปิดอยู่ ({be_name}) · ซิงก์ล่าสุด {rs.get('last') or 'ยังไม่มีการซิงก์ในรอบนี้'}", "ok")
+    card("เก็บข้อมูลถาวร (ซิงก์อัตโนมัติ)", chips_html([chip]) +
+         '<div class="muted" style="margin-top:10px">ทุกครั้งที่บันทึกสัญญาณ/ผลจริง ระบบจะส่งข้อมูลการเรียนรู้ไปเก็บภายนอก '
+         'และดึงกลับมาเองเมื่อแอปรีสตาร์ท' + (" · ใน Google Sheets จะมีชีต “ประวัติ”, “น้ำหนัก Rule” ให้เปิดดูได้" if be == "sheets" else "") + '</div>')
+    if cfg_ok:
+        c1, c2 = st.columns(2)
+        if c1.button("☁️ ซิงก์ขึ้นคลาวด์ตอนนี้"):
+            store.save()
+            (st.success("ซิงก์สำเร็จ") if rs.get("ok") else st.error(rs.get("error")))
+        if c2.button("⬇ ดึงข้อมูลจากคลาวด์"):
+            if store.pull_remote():
+                st.success("ดึงข้อมูลสำเร็จ")
+                st.rerun()
+            else:
+                st.error(rs.get("error") or "ดึงข้อมูลไม่สำเร็จ")
+    with st.expander("วิธีตั้งค่าด้วย Google Sheets (แนะนำ · ทำครั้งเดียว)"):
+        st.markdown(
+            "1. เปิดไฟล์ Google Sheets ของคุณ → เมนู **Extensions → Apps Script**  \n"
+            "2. ลบโค้ดเดิม แล้ววางโค้ดด้านล่าง จากนั้นแก้ค่า `TOKEN` เป็นรหัสลับที่คุณตั้งเอง (ยาว ๆ เดายาก) แล้วกด Save  \n"
+            "3. กด **Deploy → New deployment** → ประเภท **Web app** → Execute as: **Me** · Who has access: **Anyone** → Deploy "
+            "→ กดอนุญาตสิทธิ์ (ถ้าขึ้นว่า Google ยังไม่ได้ตรวจสอบแอป ให้เลือก Advanced → Go to ... เพราะเป็นสคริปต์ของคุณเอง)  \n"
+            "4. คัดลอก **Web app URL** (ลงท้ายด้วย `/exec`) แล้วใส่ใน Streamlit Secrets:")
+        st.code('SHEETS_URL = "https://script.google.com/macros/s/.../exec"\nSHEETS_TOKEN = "รหัสลับเดียวกับ TOKEN ในสคริปต์"', language="toml")
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps_script", "Code.gs"), encoding="utf-8") as fh:
+                st.code(fh.read(), language="javascript")
+        except Exception:  # noqa
+            st.caption("ไม่พบไฟล์ apps_script/Code.gs ใน repo")
+        st.caption("แก้โค้ดสคริปต์ภายหลัง ต้อง Deploy → Manage deployments → แก้ไข → New version อีกครั้ง · "
+                   "แนะนำให้ตั้งการแชร์ชีตเป็น “Restricted” (เฉพาะคุณ) เพราะสคริปต์ทำงานในนามเจ้าของไฟล์ ไม่ต้องเปิดลิงก์สาธารณะ")
+    with st.expander("ทางเลือก: GitHub Gist"):
+        st.markdown(
+            "สร้าง Secret Gist ที่ gist.github.com (ไฟล์ `state.json` เนื้อหา `{}`) แล้วสร้าง Fine-grained token สิทธิ์ **Gists: Read and write**")
+        st.code('GITHUB_TOKEN = "github_pat_..."\nGIST_ID = "รหัส gist ของคุณ"', language="toml")
+        st.caption("ถ้าตั้งทั้ง Google Sheets และ Gist ระบบจะใช้ Google Sheets")
+    card("ไฟล์สำรอง (ทางเลือก)", '<div class="muted">ดาวน์โหลดเก็บไว้เองอีกชั้นหนึ่ง หรือใช้กู้คืนข้อมูลจากเครื่องอื่น</div>')
     blob = json.dumps({"state": store.state, "history": store.history}, ensure_ascii=False, indent=1)
     st.download_button("⬇ ดาวน์โหลดไฟล์สำรอง", blob, file_name=f"quant_backup_{time.strftime('%Y%m%d')}.json",
                        mime="application/json")
@@ -566,7 +622,9 @@ with tab4:
             store.state, store.history = d["state"], d["history"]
             for k, v in q.DEFAULT_WEIGHTS.items():
                 store.state["weights"].setdefault(k, v)
+            q.REMOTE_STATE["blocked"] = False          # ผู้ใช้ตั้งใจกู้คืนเอง -> อนุญาตให้ซิงก์ทับคลาวด์
             store.save()
             st.success("กู้คืนสำเร็จ")
+            cloud_warn()
         except Exception:  # noqa
             st.error("ไฟล์สำรองไม่ถูกต้อง")
