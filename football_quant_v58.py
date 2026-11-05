@@ -713,12 +713,207 @@ ROLE_TO_MARKET = lambda role, f: {
 # ----------------------------------------------------------------------------
 # 4) State (น้ำหนัก + Rule ที่เรียนรู้) และ History
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# ซิงก์ข้อมูลเรียนรู้ไปเก็บที่ GitHub Gist (กันข้อมูลหายเมื่อ Streamlit Cloud รีสตาร์ท)
+# ตั้งค่าด้วยตัวแปร GITHUB_TOKEN (สิทธิ์ Gists: read/write) และ GIST_ID — ถ้าไม่ตั้ง ระบบทำงานเฉพาะในเครื่องเหมือนเดิม
+# ----------------------------------------------------------------------------
+REMOTE_STATE = {"enabled": False, "ok": None, "error": None, "last": None, "blocked": False, "backend": None}
+GIST_FILES = ("state.json", "history.json")
+_PULL_TRIED = set()
+
+
+def _gist_cfg():
+    tok, gid = (os.environ.get("GITHUB_TOKEN") or "").strip(), (os.environ.get("GIST_ID") or "").strip()
+    return (tok, gid) if tok and gid else None
+
+
+def _gh_headers(tok):
+    return {"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "football-quant", "Content-Type": "application/json"}
+
+
+def _gh(method, url, tok, payload=None):
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers=_gh_headers(tok))
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.load(resp)
+
+
+def _remote_err(e):
+    if isinstance(e, RuntimeError):
+        return str(e)
+    if isinstance(e, urllib.error.HTTPError):
+        hint = {401: "token ไม่ถูกต้อง/หมดอายุ", 403: "token ไม่มีสิทธิ์ Gists หรือโดนจำกัดการเรียก",
+                404: "ไม่พบ Gist (ตรวจ GIST_ID และสิทธิ์ของ token)"}.get(e.code, "")
+        return f"GitHub {e.code} {hint}".strip()
+    if isinstance(e, urllib.error.URLError):
+        return f"เชื่อมต่อ GitHub ไม่ได้: {e.reason}"
+    return f"{type(e).__name__}: {str(e)[:120]}"
+
+
+def _gist_pull():
+    """ดึง state/history จาก Gist คืน dict {ชื่อไฟล์: ข้อมูล} หรือ None ถ้าไม่ได้ตั้งค่า/ล้มเหลว"""
+    cfg = _gist_cfg()
+    if not cfg:
+        return None
+    tok, gid = cfg
+    REMOTE_STATE["enabled"] = True
+    try:
+        g = _gh("GET", f"https://api.github.com/gists/{gid}", tok)
+        out = {}
+        for name in GIST_FILES:
+            fo = (g.get("files") or {}).get(name)
+            if not fo:
+                continue
+            text = fo.get("content")
+            if fo.get("truncated") or text is None:       # ไฟล์ใหญ่ API ตัดเนื้อหา -> ดึงจาก raw_url
+                req = urllib.request.Request(fo["raw_url"], headers=_gh_headers(tok))
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    text = r.read().decode("utf-8")
+            out[name] = json.loads(text) if text and text.strip() else None
+        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        return out
+    except Exception as e:  # noqa
+        REMOTE_STATE.update(ok=False, error=_remote_err(e))
+        return None
+
+
+def _gist_push(state, history):
+    cfg = _gist_cfg()
+    if not cfg:
+        return False
+    tok, gid = cfg
+    REMOTE_STATE["enabled"] = True
+    if REMOTE_STATE.get("blocked"):
+        REMOTE_STATE.update(ok=False, error="ข้ามการซิงก์ขึ้นคลาวด์: ดึงข้อมูลเดิมจากคลาวด์ไม่สำเร็จ (กันการเขียนทับด้วยข้อมูลว่าง) กด “ดึงข้อมูลจากคลาวด์” เพื่อลองใหม่")
+        return False
+    try:
+        _gh("PATCH", f"https://api.github.com/gists/{gid}", tok, {"files": {
+            "state.json": {"content": json.dumps(state, ensure_ascii=False)},
+            "history.json": {"content": json.dumps(history, ensure_ascii=False)}}})
+        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        return True
+    except Exception as e:  # noqa
+        REMOTE_STATE.update(ok=False, error=_remote_err(e))
+        return False
+
+
+def _sheets_cfg():
+    url, tok = (os.environ.get("SHEETS_URL") or "").strip(), (os.environ.get("SHEETS_TOKEN") or "").strip()
+    return (url, tok) if url and tok else None
+
+
+def remote_backend():
+    """เลือกที่เก็บข้อมูลถาวร: Google Sheets (ถ้าตั้งค่า) > GitHub Gist > ไม่มี"""
+    return "sheets" if _sheets_cfg() else ("gist" if _gist_cfg() else None)
+
+
+def _cell(v):
+    if isinstance(v, bool) or v is None:
+        return "" if v is None else str(v)
+    if isinstance(v, (int, float)):
+        return v
+    v = str(v)
+    return " " + v if v[:1] in ("=", "+", "-", "@") else v        # กัน Google Sheets ตีความเป็นสูตร
+
+
+def sheet_views(state, history):
+    """ตารางอ่านง่ายสำหรับแสดงใน Google Sheets"""
+    hist = [["id", "บันทึกเมื่อ", "เหย้า", "เยือน", "ลีก", "สัญญาณฟันธง", "ระดับ", "ความมั่นใจ %", "สถานะ", "สกอร์", "ผล", "กำไร/ขาดทุน (หน่วย)"]]
+    for r in reversed(history):
+        fe, pk = r.get("features") or {}, r.get("pick") or {}
+        done = r.get("status") == "settled"
+        hist.append([_cell(x) for x in (
+            r.get("id", ""), r.get("created", ""), fe.get("home", ""), fe.get("away", ""), fe.get("league", ""),
+            pk.get("label", ""), pk.get("tier", ""), pk.get("confidence", ""),
+            "บันทึกผลแล้ว" if done else "รอผล", "-".join(map(str, r.get("score") or [])),
+            result_word(r["pick_r"]) if done and "pick_r" in r else "", r.get("pick_profit", "") if done else "")])
+    wt = [["Rule", "ชื่อ", "น้ำหนัก", "ใช้ (ครั้ง)"]]
+    for k, v in sorted((state.get("weights") or {}).items()):
+        wt.append([_cell(k), _cell(RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง")), round(v, 4),
+                   (state.get("rule_stats") or {}).get(k, {}).get("n", 0)])
+    lr = [["id", "สถานะ", "เงื่อนไข", "เล่น", "ชนะ %", "จำนวนนัด", "strength"]]
+    for r in state.get("learned_rules") or []:
+        lr.append([_cell(r.get("id")), "เปิด" if r.get("enabled", True) else "ปิด", _cell(" + ".join(r.get("tags", []))),
+                   _cell(ROLE_TH.get(r.get("role"), r.get("role"))), round(100 * r.get("wr", 0), 1), r.get("n", 0), r.get("strength", "")])
+    return {"ประวัติ": hist, "น้ำหนัก Rule": wt, "Rule ที่ระบบสร้างเอง": lr}
+
+
+def _sheets_call(payload):
+    url, tok = _sheets_cfg()
+    body = json.dumps(dict(payload, token=tok)).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as resp:         # Apps Script ตอบด้วย 302 -> urllib ตามไปดึงผลให้เอง
+        raw = resp.read().decode("utf-8", "replace")
+    try:
+        out = json.loads(raw)
+    except ValueError:
+        raise RuntimeError("Google Sheets ตอบกลับไม่ใช่ JSON — ตรวจว่า Deploy เป็น Web app, Execute as = Me และ Who has access = Anyone")
+    if not out.get("ok"):
+        raise RuntimeError("Google Sheets: " + str(out.get("error"))[:150])
+    return out
+
+
+def remote_pull():
+    """ดึง state/history จากที่เก็บถาวร คืน dict {ชื่อไฟล์: ข้อมูล} หรือ None ถ้าไม่ได้ตั้งค่า/ล้มเหลว"""
+    be = remote_backend()
+    if not be:
+        return None
+    if be == "gist":
+        REMOTE_STATE.update(enabled=True, backend="gist")
+        return _gist_pull()
+    REMOTE_STATE.update(enabled=True, backend="sheets")
+    try:
+        out = _sheets_call({"action": "pull"})
+        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        return {"state.json": out.get("state"), "history.json": out.get("history")}
+    except Exception as e:  # noqa
+        REMOTE_STATE.update(ok=False, error=_remote_err(e))
+        return None
+
+
+def remote_push(state, history):
+    be = remote_backend()
+    if not be:
+        return False
+    REMOTE_STATE.update(enabled=True, backend=be)
+    if REMOTE_STATE.get("blocked"):
+        REMOTE_STATE.update(ok=False, error="ข้ามการซิงก์: ดึงข้อมูลเดิมจากที่เก็บถาวรไม่สำเร็จ (กันการเขียนทับด้วยข้อมูลว่าง) กด “ดึงข้อมูลจากคลาวด์” เพื่อลองใหม่")
+        return False
+    if be == "gist":
+        return _gist_push(state, history)
+    try:
+        _sheets_call({"action": "push", "state": state, "history": history, "views": sheet_views(state, history)})
+        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        return True
+    except Exception as e:  # noqa
+        REMOTE_STATE.update(ok=False, error=_remote_err(e))
+        return False
+
+
+def _valid_remote(data):
+    st_, hi = (data or {}).get("state.json"), (data or {}).get("history.json")
+    return (st_ if isinstance(st_, dict) and st_.get("weights") else None,
+            hi if isinstance(hi, list) and hi else None)
+
+
 class Store:
     def __init__(self, d):
         self.dir = d
         os.makedirs(d, exist_ok=True)
         self.state_p = os.path.join(d, "state.json")
         self.hist_p = os.path.join(d, "history.json")
+        key_ = os.path.abspath(d)
+        if (not os.path.exists(self.state_p) and not os.path.exists(self.hist_p)
+                and remote_backend() and key_ not in _PULL_TRIED):
+            _PULL_TRIED.add(key_)
+            data_ = remote_pull()
+            REMOTE_STATE["blocked"] = data_ is None          # ดึงไม่สำเร็จ -> ห้าม push ทับจนกว่าจะดึงสำเร็จ
+            st_, hi = _valid_remote(data_)
+            for path, obj in ((self.state_p, st_), (self.hist_p, hi)):
+                if obj is not None:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        json.dump(obj, fh, ensure_ascii=False, indent=1)
         self.state = self._load(self.state_p, {
             "weights": dict(DEFAULT_WEIGHTS), "rule_stats": {}, "learned_rules": [],
             "params": {}, "meta": {"next_learned": 1, "schema": "5.9"}})
@@ -752,10 +947,31 @@ class Store:
                 return json.load(fh)
         return default
 
-    def save(self):
+    def save(self, push=True):
         for p, obj in ((self.state_p, self.state), (self.hist_p, self.history)):
             with open(p, "w", encoding="utf-8") as fh:
                 json.dump(obj, fh, ensure_ascii=False, indent=1)
+        if push:
+            remote_push(self.state, self.history)       # ล้มเหลวได้ (ข้อมูลในเครื่องยังอยู่) ดูสถานะที่ REMOTE_STATE
+
+    def pull_remote(self):
+        """ดึงข้อมูลจากคลาวด์มาเขียนทับในเครื่อง คืน True ถ้าสำเร็จ"""
+        data_ = remote_pull()
+        if data_ is None:
+            return False
+        REMOTE_STATE["blocked"] = False
+        st_, hi = _valid_remote(data_)
+        if st_ is None and hi is None:
+            return True                                     # คลาวด์ว่างเปล่า (เริ่มต้นใหม่) ไม่ใช่ความผิดพลาด
+        if st_ is not None:
+            self.state = st_
+        if hi is not None:
+            self.history = hi
+        for k, v in DEFAULT_WEIGHTS.items():
+            self.state["weights"].setdefault(k, v)
+        self._migrate()
+        self.save(push=False)
+        return True
 
     @property
     def params(self):
