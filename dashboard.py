@@ -443,7 +443,7 @@ def stats_dashboard(state, history):
         fe = r["features"]
         if r["status"] == "settled":
             kind = "ok" if r["pick_r"] > 0 else "bad" if r["pick_r"] < 0 else "warn"
-            tail = _chip(f'{q.result_word(r["pick_r"])} {r["pick_profit"]:+.2f}', kind)
+            tail = _chip(f'{q.result_word(r["pick_r"])} {r["pick_profit"]:+.2f}', kind) + (" " + _chip("แก้ไขแล้ว", "warn") if r.get("edits") else "")
         else:
             tail = _chip("รอผล", "off")
         hist.append(f'<div class="fq-hist"><div>{e(fe["home"])} vs {e(fe["away"])}<small>{e(r["pick"]["label"])}</small></div><div>{tail}</div></div>')
