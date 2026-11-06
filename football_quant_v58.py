@@ -1214,8 +1214,11 @@ def result_word(r):
 def update_weights(store, rec, outcomes):
     P, S = store.params, store.state
     agg, changes = {}, {}
+    valid_learned = {r_["id"] for r_ in S.get("learned_rules", [])}
     for c in rec["contribs"]:
         if c["market"] not in outcomes:
+            continue
+        if c["rule"].startswith("L") and c["rule"] not in valid_learned:
             continue
         r = outcomes[c["market"]][0]
         a = agg.setdefault(c["rule"], [0.0, 0.0])
@@ -1852,6 +1855,8 @@ def do_settle(store, rec, hg, ag):
     changes = update_weights(store, rec, outcomes)
     new = discover_rules(store, verbose=False)
     store.state["meta"]["settled"] = store.state["meta"].get("settled", 0) + 1
+    rec["settle_seq"] = store.state["meta"]["settled"]
+    rec["settled_at"] = time.strftime("%Y-%m-%d %H:%M")
     store.save()
     return outcomes, r, pf, changes, new
 
@@ -1883,6 +1888,108 @@ def cmd_settle(a):
         for r_ in new:
             print(f"   + {r_['id']}: ถ้า [{' + '.join(r_['tags'])}] -> เล่น {ROLE_TH[r_['role']]}"
                   f"  (ชนะ {r_['wr']:.0%} จาก {r_['n']} นัด, strength {r_['strength']})")
+
+
+def rebuild_learning(store):
+    """คำนวณการเรียนรู้ใหม่ทั้งหมดจากประวัติที่บันทึกผลแล้ว ตามลำดับที่ใส่ผลเดิม
+    (รีเซ็ตน้ำหนัก/Rule ที่เรียนรู้ แล้ว replay ทีละนัด โดยให้การค้นหา Rule ใหม่เห็นเฉพาะนัดก่อนหน้า)
+    ใช้หลังแก้สกอร์หรือยกเลิกผล เพื่อไม่ให้ข้อมูลการเรียนรู้ผิดตามสกอร์ที่ใส่ผิด คืนจำนวนนัดที่ replay"""
+    S = store.state
+    S["weights"] = dict(DEFAULT_WEIGHTS)
+    S["rule_stats"] = {}
+    S["learned_rules"] = []
+    meta = S.setdefault("meta", {})
+    meta["next_learned"], meta["settled"] = 1, 0
+    order = sorted(((r.get("settle_seq", -1), i, r) for i, r in enumerate(store.history) if r.get("status") == "settled"),
+                   key=lambda x: (x[0], x[1]))
+    recs = [r for _, _, r in order]
+    for r in recs:
+        r["status"] = "_replay"                       # ซ่อนไว้ก่อน เพื่อไม่ให้ discover_rules เห็นข้อมูลจากอนาคต
+    try:
+        for rec in recs:
+            rec["status"] = "settled"
+            hg, ag = rec["score"]
+            outcomes = settle_all(rec, hg, ag)
+            pk = rec["pick"]
+            r_, halves = outcomes[pk["market"]]
+            rec.update(pick_r=r_, pick_profit=round(profit(halves, pk["price_win"]), 4), role_r=role_outcomes(rec, outcomes))
+            update_weights(store, rec, outcomes)
+            discover_rules(store, verbose=False)
+            meta["settled"] += 1
+            rec["settle_seq"] = meta["settled"]
+    finally:
+        for r in recs:
+            if r["status"] == "_replay":
+                r["status"] = "settled"
+    return len(recs)
+
+
+def _find(store, rid):
+    return next((r for r in store.history if r["id"] == rid), None)
+
+
+def edit_result(store, rid, hg, ag):
+    """แก้สกอร์ของรายการที่บันทึกผลแล้ว แล้วคำนวณการเรียนรู้ใหม่ คืนสรุปก่อน/หลัง (ValueError ถ้าไม่พบ/ยังไม่ได้บันทึกผล)"""
+    rec = _find(store, rid)
+    if rec is None or rec.get("status") != "settled":
+        raise ValueError("ไม่พบรายการที่บันทึกผลแล้ว")
+    old = {"score": list(rec["score"]), "r": rec["pick_r"], "profit": rec["pick_profit"]}
+    old_w, old_rules = dict(store.state["weights"]), len(store.state["learned_rules"])
+    rec["score"] = [int(hg), int(ag)]
+    rec["edits"] = rec.get("edits", 0) + 1
+    rec["edited_at"] = time.strftime("%Y-%m-%d %H:%M")
+    n = rebuild_learning(store)
+    store.save()
+    return {"old": old, "new": {"score": rec["score"], "r": rec["pick_r"], "profit": rec["pick_profit"]},
+            "replayed": n, "weight_changes": _weight_diff(old_w, store.state["weights"]),
+            "rules_before": old_rules, "rules_after": len(store.state["learned_rules"])}
+
+
+def revert_result(store, rid):
+    """ยกเลิกผลที่บันทึกไว้ (กลับเป็นรอผล) แล้วคำนวณการเรียนรู้ใหม่"""
+    rec = _find(store, rid)
+    if rec is None or rec.get("status") != "settled":
+        raise ValueError("ไม่พบรายการที่บันทึกผลแล้ว")
+    old_w, old_rules = dict(store.state["weights"]), len(store.state["learned_rules"])
+    rec["status"] = "pending"
+    for k in ("score", "pick_r", "pick_profit", "role_r", "settle_seq", "settled_at"):
+        rec.pop(k, None)
+    n = rebuild_learning(store)
+    store.save()
+    return {"replayed": n, "weight_changes": _weight_diff(old_w, store.state["weights"]),
+            "rules_before": old_rules, "rules_after": len(store.state["learned_rules"])}
+
+
+def _weight_diff(old, new):
+    out = []
+    for k in sorted(set(old) | set(new)):
+        a, b = old.get(k), new.get(k)
+        if a is None or b is None or abs(a - b) >= 0.005:
+            out.append((k, a, b))
+    return out
+
+
+def cmd_edit(a):
+    store = Store(a.data_dir)
+    mm = re.match(r"^\s*(\d+)\s*[-:]\s*(\d+)\s*$", a.score)
+    if not mm:
+        sys.exit("รูปแบบสกอร์ไม่ถูกต้อง ใช้เช่น 2-1 (เหย้า-เยือน)")
+    try:
+        res = edit_result(store, a.id, int(mm.group(1)), int(mm.group(2)))
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"แก้สกอร์ {a.id}: {res['old']['score'][0]}-{res['old']['score'][1]} -> {res['new']['score'][0]}-{res['new']['score'][1]}")
+    print(f"ผลสัญญาณ: {result_word(res['old']['r'])} ({res['old']['profit']:+.2f}) -> {result_word(res['new']['r'])} ({res['new']['profit']:+.2f})")
+    print(f"คำนวณการเรียนรู้ใหม่จาก {res['replayed']} นัด | Rule ที่ระบบสร้างเอง {res['rules_before']} -> {res['rules_after']}")
+
+
+def cmd_revert(a):
+    store = Store(a.data_dir)
+    try:
+        res = revert_result(store, a.id)
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"ยกเลิกผลของ {a.id} แล้ว (กลับเป็นรอผล) | คำนวณการเรียนรู้ใหม่จาก {res['replayed']} นัด")
 
 
 def delete_records(store, ids):
@@ -1975,6 +2082,13 @@ def main():
     p.add_argument("id")
     p.add_argument("score", help="เหย้า-เยือน เช่น 2-1")
     p.set_defaults(fn=cmd_settle)
+    p = sp.add_parser("edit", help="แก้สกอร์ที่ใส่ผิด แล้วคำนวณการเรียนรู้ใหม่")
+    p.add_argument("id")
+    p.add_argument("score", help="เหย้า-เยือน เช่น 2-1")
+    p.set_defaults(fn=cmd_edit)
+    p = sp.add_parser("revert", help="ยกเลิกผลที่บันทึกไว้ (กลับเป็นรอผล)")
+    p.add_argument("id")
+    p.set_defaults(fn=cmd_revert)
     p = sp.add_parser("delete", help="ลบรายการออกจากประวัติ")
     p.add_argument("ids", nargs="+")
     p.set_defaults(fn=cmd_delete)
