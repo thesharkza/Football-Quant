@@ -118,6 +118,7 @@ ul.ev { margin:10px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; lin
 .stButton > button[kind="primary"] { background:linear-gradient(135deg,#14b8a6,#6366f1); border:none; color:#fff;
   box-shadow:0 10px 28px rgba(20,184,166,.28); }
 .stButton > button[kind="primary"]:hover { filter:brightness(1.08); }
+.stButton > button:disabled { opacity:.42; box-shadow:none !important; cursor:not-allowed; filter:none !important; }
 [data-testid="stFileUploader"] section { border:1.5px dashed rgba(94,234,212,.4); border-radius:16px; background:rgba(255,255,255,.03); }
 .stTabs [data-baseweb="tab-list"] { gap:6px; border-bottom:none; }
 .stTabs [data-baseweb="tab"] { border-radius:12px; padding:8px 14px; background:rgba(255,255,255,.04); }
@@ -488,6 +489,56 @@ with tab2:
                     st.rerun()
 
         render_result(res_from_record(rec, store), after_pick=settle_ui, key="t2")
+
+    # ---------------- แก้ไข/ยกเลิกผลที่ใส่ผิด ----------------
+    st.markdown('<div class="fq"><div class="fq-sec">แก้ไขผลที่ใส่ผิด <small>แก้สกอร์แล้วระบบคำนวณน้ำหนัก Rule และ Rule ที่เรียนรู้ใหม่จากประวัติทั้งหมด</small></div></div>',
+                unsafe_allow_html=True)
+    em = ss.pop("edit_msg", None)
+    if em:
+        if em["kind"] == "edit":
+            o, n = em["old"], em["new"]
+            cls = "win" if n["r"] > 0 else "lose" if n["r"] < 0 else "push"
+            st.markdown(f'<div class="res {cls}">แก้สกอร์ {esc(em["title"])}: {o["score"][0]}-{o["score"][1]} → {n["score"][0]}-{n["score"][1]} · '
+                        f'ผลสัญญาณ {q.result_word(o["r"])} ({o["profit"]:+.2f}) → {q.result_word(n["r"])} ({n["profit"]:+.2f})</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="res push">ยกเลิกผลของ {esc(em["title"])} แล้ว · กลับเป็น “รอผล” (บันทึกผลใหม่ได้ด้านบน)</div>', unsafe_allow_html=True)
+        wc = sorted(em["weight_changes"], key=lambda x: -abs((x[2] or 1.0) - (x[1] or 1.0)))[:8]
+        body = "".join(
+            f'<div class="row"><span class="l">{esc(k)} · {esc(q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"))}</span>'
+            f'<span class="r">{("-" if a is None else f"{a:.2f}")} → {("ถูกลบ" if b is None else f"{b:.2f}")}</span></div>' for k, a, b in wc)
+        body += (f'<div class="muted" style="margin-top:8px">คำนวณการเรียนรู้ใหม่จาก {em["replayed"]} นัด · '
+                 f'Rule ที่ระบบสร้างเอง {em["rules_before"]} → {em["rules_after"]}</div>')
+        card("ผลของการคำนวณการเรียนรู้ใหม่" + ("" if wc else " (น้ำหนัก Rule ไม่เปลี่ยน)"), body)
+        cloud_warn()
+    done_recs = [r for r in reversed(store.history) if r["status"] == "settled"]
+    if not done_recs:
+        st.caption("ยังไม่มีรายการที่บันทึกผลแล้ว")
+    else:
+        eid = st.selectbox("เลือกรายการที่ต้องการแก้", [r["id"] for r in done_recs], key="edit_sel",
+                           format_func=lambda i: next(f"{r['features']['home']} {r['score'][0]}-{r['score'][1]} {r['features']['away']}"
+                                                      + (" (เคยแก้ไข)" if r.get("edits") else "") for r in done_recs if r["id"] == i))
+        er = next(r for r in done_recs if r["id"] == eid)
+        fe = er["features"]
+        kind = "ok" if er["pick_r"] > 0 else "bad" if er["pick_r"] < 0 else "warn"
+        card("ผลที่บันทึกไว้", f'<div class="row"><span class="l">{esc(fe["home"])} {er["score"][0]}-{er["score"][1]} {esc(fe["away"])}</span>'
+             f'<span class="r">{esc(er["pick"]["label"])}</span></div>'
+             f'<div style="margin-top:8px">{chips_html([(f"{q.result_word(er['pick_r'])} · {er['pick_profit']:+.2f} หน่วย", kind)] + ([("แก้ไขแล้ว " + str(er["edits"]) + " ครั้ง", "")] if er.get("edits") else []))}</div>')
+        c1, c2 = st.columns(2)
+        ehg = c1.number_input(f"ประตู {fe['home']} (ที่ถูกต้อง)", 0, 30, int(er["score"][0]), key=f"ed_hg_{eid}")
+        eag = c2.number_input(f"ประตู {fe['away']} (ที่ถูกต้อง)", 0, 30, int(er["score"][1]), key=f"ed_ag_{eid}")
+        changed = (int(ehg), int(eag)) != tuple(er["score"])
+        sure = st.checkbox("ยืนยัน: ระบบจะคำนวณน้ำหนัก Rule และ Rule ที่เรียนรู้ใหม่จากประวัติทั้งหมด (ผลลัพธ์เท่ากับใส่สกอร์ที่ถูกตั้งแต่แรก)", key=f"ed_ok_{eid}")
+        b1, b2 = st.columns(2)
+        if b1.button("💾 บันทึกการแก้ไขสกอร์", type="primary", disabled=not (sure and changed)):
+            r_ = q.edit_result(store, eid, int(ehg), int(eag))
+            ss["edit_msg"] = {"kind": "edit", "title": f"{fe['home']} vs {fe['away']}", **r_}
+            st.rerun()
+        if b2.button("↩ ยกเลิกผลนี้ (กลับเป็นรอผล)", disabled=not sure):
+            r_ = q.revert_result(store, eid)
+            ss["edit_msg"] = {"kind": "revert", "title": f"{fe['home']} vs {fe['away']}", **r_}
+            st.rerun()
+        if not changed:
+            st.caption("แก้ตัวเลขสกอร์ให้ต่างจากที่บันทึกไว้ ปุ่มบันทึกจึงจะใช้งานได้")
 
 # ================================================================ TAB 3
 with tab3:
