@@ -26,6 +26,7 @@ if st.query_params.get("diag") == "1":
     st.stop()
 
 import football_quant_v58 as q
+import dashboard as d
 
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
@@ -37,7 +38,7 @@ html, body, [class*="css"], .stMarkdown, button, input, textarea { font-family: 
                      linear-gradient(180deg, #0b1220 0%, #0d1526 100%); }
 header[data-testid="stHeader"], #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"],
 .stDeployButton, [data-testid="stStatusWidget"] { display: none !important; visibility: hidden !important; }
-.block-container { padding-top: 1.4rem; padding-bottom: 3rem; max-width: 880px; }
+.block-container { padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1040px; }
 h1, h2, h3 { letter-spacing: -.01em; }
 
 .hero { display:flex; align-items:center; gap:14px; margin: 4px 0 18px; }
@@ -129,6 +130,7 @@ ul.ev { margin:10px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; lin
 @media (max-width: 640px) { .pick .lb { font-size:1.4rem; } .grid3 { gap:6px; } .team .nm { font-size:1rem; } }
 </style>
 """
+CSS = CSS.replace("</style>", d.CSS + "</style>")
 if st.query_params.get("plain") != "1":      # ?plain=1 = ปิดการตกแต่ง CSS (ไว้ทดสอบ)
     st.markdown(CSS, unsafe_allow_html=True)
 
@@ -352,118 +354,28 @@ def res_from_record(rec, store):
 
 
 # ---------------------------------------------------------------- แสดงผลลัพธ์
-def render_result(res, after_pick=None):
-    m, f, contribs, pick = res["m"], res["f"], res["contribs"], res["pick"]
-    rs = m.get("research") or {}
-    tv = m.get("team_value") or {}
-    fm = m.get("form") or {}
-
-    def team(side, name, tag):
-        rk = f["rank_home"] if side == "home" else f["rank_away"]
-        v = tv.get(side)
-        return (f'<div class="team">{"<span class=rk>อันดับ " + esc(f"{rk:g}") + "</span>" if rk is not None else ""}'
-                f'<div class="nm">{esc(name)}</div><div class="tg">{tag}</div>'
-                f'<div>{form_chips((fm.get(side) or {}).get("seq"))}</div>'
-                f'{"<div class=tg>มูลค่าทีม " + esc(f"{v:g}") + "</div>" if v else ""}</div>')
-    comp = rs.get("competition") or f["league"]
-    card("แมตช์", f'<div class="match"><div class="lg">{esc(comp)}</div><div class="teams">'
-         f'{team("home", f["home"], "เจ้าบ้าน")}<div class="vs">VS</div>{team("away", f["away"], "ทีมเยือน")}</div></div>')
-
-    low = pick["tier"] == "ต่ำ"
-    flags = []
-    if pick.get("verify_fail"):
-        flags.append("❌ เหย้า/เยือนไม่ผ่านการยืนยัน")
-    if pick.get("move_only"):
-        flags.append("⚠ มาจากการไหลของราคาล้วน (ลดคะแนนแล้ว)")
-    if pick["veto"]:
-        flags.append("🚫 แบน: " + ", ".join(market_th(v, f) for v in pick["veto"]))
-    if low:
-        flags.append("สัญญาณอ่อน · ควรลดสัดส่วนเดิมพัน")
-    st.markdown(
-        f'<div class="pick{" low" if low else ""}"><div class="top"><span class="badge">สัญญาณฟันธงเดี่ยว</span>'
-        f'<span class="tier">ระดับ{esc(pick["tier"])}</span></div><div class="lb">{esc(pick["label"])}</div>'
-        f'<div class="sub">ใช้ราคาปัจจุบัน · ความมั่นใจเชิงสัญญาณ {pick["confidence"]:.0f}%</div>'
-        f'<div class="bar"><div style="width:{pick["confidence"]:.0f}%"></div></div>'
-        f'<div class="flags">{"".join(f"<span class=flag>{esc(x)}</span>" for x in flags)}</div></div>',
-        unsafe_allow_html=True)
+def render_result(res, after_pick=None, key="r"):
+    f = res["f"]
+    st.markdown(d.kpi_and_match(res), unsafe_allow_html=True)
     st.caption("ความมั่นใจนี้แปลงจากคะแนนสัญญาณ ยังไม่ผ่านการสอบเทียบกับผลจริง ไม่ใช่ความน่าจะเป็นที่แท้จริง")
     if after_pick:
         after_pick()
-
-    # ราคาปัจจุบัน
-    xc = f["x12_cur"]
-    pc = q.implied(xc)
-    hw = f["fav_water_c"] if f["fav"] == "home" else f["dog_water_c"]
-    aw = f["dog_water_c"] if f["fav"] == "home" else f["fav_water_c"]
-    tiles = "".join(f'<div class="tile"><div class="k">{k}</div><div class="v">{o:.2f}</div><div class="p">{p:.0%}</div></div>'
-                    for k, o, p in (("เหย้า", xc[0], pc[0]), ("เสมอ", xc[1], pc[1]), ("เยือน", xc[2], pc[2])))
-    rows = (f'<div class="row"><span class="l">แฮนดิแคป</span><span class="r">{esc(f["home"])} {esc(q.fmt_line(f["line_c"]))}'
-            f' <span class="muted">น้ำ {hw:.2f}</span> · {esc(f["away"])} <span class="muted">น้ำ {aw:.2f}</span></span></div>')
-    if f["has_ou"]:
-        rows += (f'<div class="row"><span class="l">สูง/ต่ำ</span><span class="r">{f["ou_c"]:g} '
-                 f'<span class="muted">สูง {f["over_water_c"]:.2f} · ต่ำ {f["under_water_c"]:.2f}</span></span></div>')
-    card("ราคาปัจจุบัน (ราคาหลักที่ใช้ตัดสิน)", f'<div class="grid3">{tiles}</div><div style="margin-top:10px">{rows}</div>')
-
-    # การไหลของราคา
-    c1, a1 = arrow(f["hdp_shift_fav"])
-    c2, a2 = arrow(f["x12_pp"], 0.5)
-    flow = (f'<div class="row"><span class="l">เรตแฮนดิแคป (ทีมต่อ {esc(f["fav_name"])})</span><span class="r {c1}">'
-            f'{esc(q.fmt_line(f["line_o"]))} → {esc(q.fmt_line(f["line_c"]))} {a1}</span></div>'
-            f'<div class="row"><span class="l">พูล 1X2 ทีมต่อ</span><span class="r {c2}">{f["x12_pp"]:+.1f} จุด % {a2}</span></div>')
-    if f["has_ou"]:
-        c3, a3 = arrow(f["ou_shift"])
-        flow += (f'<div class="row"><span class="l">เรตสูง/ต่ำ</span><span class="r {c3}">{f["ou_o"]:g} → {f["ou_c"]:g} {a3}</span></div>')
-    flow += f'<div class="muted" style="margin-top:6px">ความขัดแย้งพูล↔แฮนดิแคป {f["conflict"]:.0%} · ราคาเปิดใช้อ้างอิงการไหลเท่านั้น</div>'
-    card("การไหลของราคา", flow)
-
-    # สัญญาณหลัก
-    top = sorted(contribs, key=lambda c: -c["eff"])[:5]
-    if top:
-        mx = max(c["eff"] for c in top) or 1
-        body = "".join(
-            f'<div class="sig"><div class="h"><span>{esc(q.RULE_NAMES.get(c["rule"], "Rule ที่เรียนรู้เอง"))}</span>'
-            f'<span class="m">{esc(market_th(c["market"], f))} · {c["eff"]:+.2f}</span></div>'
-            f'<div class="b"><div style="width:{max(c["eff"] / mx * 100, 4):.0f}%"></div></div>'
-            f'<div class="n">{esc(c["note"])}</div></div>' for c in top)
-    else:
-        body = '<div class="muted">ไม่มี Rule ใดทำงาน</div>'
-    card("สัญญาณที่ใช้ตัดสิน", body)
-
-    # บริบทแมตช์
-    ctx = m.get("context") or {}
-    items = [(TYPE_TH.get(ctx.get("type", "league"), "ลีก"), "")]
-    items += [(lb, "") for k, lb in CTX_LABELS if ctx.get(k)]
-    if ctx.get("desperation") in ("home", "away"):
-        items.append(("หนีตาย/ลุ้นหนัก: " + (f["home"] if ctx["desperation"] == "home" else f["away"]), ""))
-    if len(items) == 1:
-        items.append(("ไม่พบบริบทพิเศษ", "off"))
-    ctx_body = chips_html(items)
-    if rs.get("evidence"):
-        ctx_body += '<ul class="ev">' + "".join(f"<li>{esc(x)}</li>" for x in rs["evidence"]) + "</ul>"
-    conf = {"high": "สูง", "medium": "ปานกลาง", "low": "ต่ำ"}.get(rs.get("confidence"))
-    title = "บริบทแมตช์ (ค้นหาอัตโนมัติ" + (f" · ความน่าเชื่อถือ{conf}" if conf else "") + ")" if rs else "บริบทแมตช์"
-    card(title, ctx_body)
+    st.markdown(d.analysis_body(res), unsafe_allow_html=True)
     if res.get("research_err"):
         st.warning(f"ค้นหาบริบทอัตโนมัติไม่สำเร็จ (ใช้ค่าตั้งต้นแทน): {res['research_err']}")
+    rs = (res["m"].get("research") or {})
     if rs.get("sources"):
         with st.expander("แหล่งข้อมูลที่ Gemini ใช้ค้นหา"):
             for s_ in rs["sources"]:
                 st.markdown(f"- [{s_['title'] or s_['uri']}]({s_['uri']})" if s_["uri"] else f"- {s_['title']}")
-
-    # ยืนยันเหย้า/เยือน
-    ok_n = sum(1 for ok, _ in f["verify"] if ok)
-    vc = "ok" if not f["verify_fail"] else "bad"
-    card("Home/Away Verification", chips_html([(f"{'ผ่าน' if not f['verify_fail'] else 'ไม่ผ่าน'} {ok_n}/{len(f['verify'])} ข้อ", vc)]))
-    with st.expander("รายละเอียดการตรวจเหย้า/เยือน"):
-        for ok, txt in f["verify"]:
-            st.write(("✅ " if ok else "❌ ") + txt)
-
     if res["warns"]:
         with st.expander(f"คำเตือนจากการอ่านข้อมูล ({len(res['warns'])})"):
             for w in res["warns"]:
                 st.write("• " + w)
-    with st.expander("รายงานฉบับเต็ม"):
+    with st.expander("รายงานฉบับเต็ม (ข้อความ)"):
         st.text(res["report"])
+    st.download_button("⬇ ดาวน์โหลดรายงานแดชบอร์ด (HTML)", d.report_document(res),
+                       file_name=f"{q.slug(f['home'] + '-vs-' + f['away'])}.html", mime="text/html", key=f"dl_{key}")
     if res.get("saved"):
         mid, ok = res["saved"]
         st.success("บันทึกสัญญาณแล้ว → ใส่ผลจริงที่แท็บ “บันทึกผล” หลังจบเกม" if ok
@@ -502,7 +414,7 @@ with tab1:
                 st.rerun()
     if ss.get("res"):
         with box:
-            render_result(ss["res"])
+            render_result(ss["res"], key="t1")
 
     with st.expander("⚙ ตั้งค่าขั้นสูง"):
         st.text_input("โมเดล Gemini", value=q.DEFAULT_MODEL, key="opt_model")
@@ -575,39 +487,13 @@ with tab2:
                     q.delete_records(store, [rid])
                     st.rerun()
 
-        render_result(res_from_record(rec, store), after_pick=settle_ui)
+        render_result(res_from_record(rec, store), after_pick=settle_ui, key="t2")
 
 # ================================================================ TAB 3
 with tab3:
     store = q.Store(DATA_DIR)
     S = store.state
-    done = [r for r in store.history if r["status"] == "settled"]
-    pend_n = sum(1 for r in store.history if r["status"] == "pending")
-    w_ = sum(r["pick_r"] > 0 for r in done)
-    l_ = sum(r["pick_r"] < 0 for r in done)
-    pr = sum(r["pick_profit"] for r in done)
-    vals = [("บันทึกผลแล้ว", len(done)), ("รอผล", pend_n), ("ชนะ/แพ้", f"{w_}/{l_}"), ("กำไรสุทธิ", f"{pr:+.2f}"),
-            ("ROI ต่อไม้", f"{pr / len(done):+.1%}" if done else "-")]
-    st.markdown('<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">' + "".join(
-        f'<div class="stat"><div class="v">{esc(v)}</div><div class="k">{k}</div></div>' for k, v in vals) + "</div>",
-        unsafe_allow_html=True)
-    recent = list(reversed(store.history))[:10]
-    if recent:
-        rows = ""
-        for r in recent:
-            fe = r["features"]
-            if r["status"] == "settled":
-                cls = "up" if r["pick_r"] > 0 else "down" if r["pick_r"] < 0 else "flat"
-                tail = f'<span class="{cls}">{q.result_word(r["pick_r"])} ({r["pick_profit"]:+.2f})</span>'
-            else:
-                tail = '<span class="muted">รอผล</span>'
-            rows += (f'<div class="hist"><div class="a">{esc(fe["home"])} vs {esc(fe["away"])}<small>{esc(r["pick"]["label"])}</small></div>'
-                     f'<div>{tail}</div></div>')
-        card("รายการล่าสุด", rows)
-    with st.expander("น้ำหนัก Rule ปัจจุบัน"):
-        st.markdown(html_table(["Rule", "ชื่อ", "น้ำหนัก", "ใช้ (ครั้ง)"],
-                               [[k, q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"), f"{v:.3f}", S["rule_stats"].get(k, {}).get("n", 0)]
-                                for k, v in sorted(S["weights"].items())]), unsafe_allow_html=True)
+    st.markdown(d.stats_dashboard(S, store.history), unsafe_allow_html=True)
     with st.expander(f"🧠 Rule ที่ระบบสร้างเอง ({len(S['learned_rules'])})"):
         if S["learned_rules"]:
             st.markdown(html_table(["id", "สถานะ", "เงื่อนไข", "เล่น", "ชนะ", "นัด"],
