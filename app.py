@@ -27,6 +27,7 @@ if st.query_params.get("diag") == "1":
 
 import football_quant_v58 as q
 import dashboard as d
+import backtest as bt
 
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
@@ -131,7 +132,7 @@ ul.ev { margin:10px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; lin
 @media (max-width: 640px) { .pick .lb { font-size:1.4rem; } .grid3 { gap:6px; } .team .nm { font-size:1rem; } }
 </style>
 """
-CSS = CSS.replace("</style>", d.CSS + "</style>")
+CSS = CSS.replace("</style>", d.CSS + bt.CSS + "</style>")
 if st.query_params.get("plain") != "1":      # ?plain=1 = ปิดการตกแต่ง CSS (ไว้ทดสอบ)
     st.markdown(CSS, unsafe_allow_html=True)
 
@@ -385,7 +386,7 @@ def render_result(res, after_pick=None, key="r"):
 
 
 # ---------------------------------------------------------------- แท็บ
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 วิเคราะห์", "🏁 บันทึกผล", "📈 สถิติ", "💾 สำรองข้อมูล"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 วิเคราะห์", "🏁 บันทึกผล", "📈 สถิติ", "🧪 ทดสอบย้อนหลัง", "💾 สำรองข้อมูล"])
 
 # ================================================================ TAB 1
 with tab1:
@@ -566,8 +567,33 @@ with tab3:
             q.delete_records(store, pick_ids)
             st.rerun()
 
-# ================================================================ TAB 4
+# ================================================================ TAB 4 (ทดสอบย้อนหลัง)
 with tab4:
+    store = q.Store(DATA_DIR)
+    n_done = sum(1 for r in store.history if r["status"] == "settled" and r.get("features") and r.get("score"))
+    st.markdown('<div class="fq"><div class="fq-sec">ทดสอบย้อนหลัง <small>เทียบ “ไม่เรียนรู้” กับ “เรียนรู้ต่อเนื่อง” บนผลที่บันทึกไว้ · ไม่มองอนาคต (walk-forward)</small></div></div>',
+                unsafe_allow_html=True)
+    card("วิธีทดสอบ", '<div class="muted">เดินตามลำดับที่ใส่ผลทีละนัด · ให้ 3 แบบฟันธงด้วยสถานะ ณ ตอนนั้น: '
+         '<b>ไม่เรียนรู้</b> (Rule เดิมตลอด) · <b>เรียนรู้เฉพาะน้ำหนัก</b> · <b>เรียนรู้เต็มรูปแบบ</b> (น้ำหนัก + สร้าง Rule ใหม่) '
+         'แล้วตัดสินด้วยสกอร์จริงก่อนให้แบบที่เรียนรู้อัปเดตตัวเอง ทุกแบบเริ่มจากน้ำหนักเริ่มต้นเท่ากัน</div>')
+    if n_done < 2:
+        st.info(f"ตอนนี้มีรายการที่บันทึกผลแล้ว {n_done} นัด ต้องมีอย่างน้อย 2 นัด (และควรมี {bt.MIN_RELIABLE} นัดขึ้นไปจึงจะสรุปได้)")
+    else:
+        st.caption(f"ข้อมูลที่ใช้ได้: {n_done} นัด" + ("" if n_done >= bt.MIN_RELIABLE else f" · น้อยกว่า {bt.MIN_RELIABLE} นัด ผลที่ได้ใช้ตัดสินไม่ได้"))
+        b1, b2 = st.columns(2)
+        bt_min = b1.number_input("จำนวนนัดขั้นต่ำก่อนสร้าง Rule ใหม่", 3, 30, int(store.params["disc_min_n"]), key="bt_minn")
+        bt_perm = b2.number_input("จำนวนรอบสุ่มสลับสกอร์ (0 = ไม่รัน)", 0, 200, 60, step=20, key="bt_perm",
+                                  help="ยิ่งมากยิ่งแม่นแต่ช้าลง ใช้คำนวณ p-value ว่ากำไรจากการเรียนรู้สูงกว่าความบังเอิญหรือไม่")
+        if st.button("▶ รัน Backtest", type="primary"):
+            with st.spinner("กำลังทดสอบย้อนหลัง..."):
+                ss["bt"] = bt.run_backtest(store.history, {"disc_min_n": int(bt_min)}, permute=int(bt_perm))
+        if ss.get("bt"):
+            st.markdown(bt.report_html(ss["bt"]), unsafe_allow_html=True)
+            st.download_button("⬇ ดาวน์โหลดรายงาน Backtest (HTML)", bt.report_document(ss["bt"]),
+                               file_name=f"backtest_{time.strftime('%Y%m%d')}.html", mime="text/html", key="dl_bt")
+
+# ================================================================ TAB 4
+with tab5:
     store = q.Store(DATA_DIR)
     rs = q.REMOTE_STATE
     be = q.remote_backend()
