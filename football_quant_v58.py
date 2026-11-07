@@ -984,8 +984,12 @@ class Store:
 # 5) Engine: รวมคะแนน + Single Best Pick (Rule 13)
 # ----------------------------------------------------------------------------
 def analyze_match(m, store):
+    return analyze_features(m, build_features(m, store.params), store)
+
+
+def analyze_features(m, f, store):
+    """ให้คะแนน Rule และฟันธงจาก features (m ไม่จำเป็น) ใช้ซ้ำใน backtest กับ features ที่เก็บไว้"""
     P, S = store.params, store.state
-    f = build_features(m, P)
     raw = []                                         # (rule, market, value, note)
     for fn in RULES:
         raw += fn(f, P)
@@ -1067,20 +1071,22 @@ def analyze_match(m, store):
 
 
 def pick_label(m, f, mk):
-    home, away = f["home"], f["away"]
-    hc, lc = m["hdp"]["current"], f["line_c"]
+    """ป้ายและราคา (ผลตอบแทนเมื่อชนะ) ของทางเลือก คำนวณจาก features ล้วน (m ไม่ถูกใช้)"""
+    home, away, lc = f["home"], f["away"], f["line_c"]
+    hw = f["fav_water_c"] if f["fav"] == "home" else f["dog_water_c"]
+    aw = f["dog_water_c"] if f["fav"] == "home" else f["fav_water_c"]
     if mk == "HDP_HOME":
-        return hc["home_water"], f"แฮนดิแคป {home} {fmt_line(lc)} @{hc['home_water']:.2f}"
+        return hw, f"แฮนดิแคป {home} {fmt_line(lc)} @{hw:.2f}"
     if mk == "HDP_AWAY":
-        return hc["away_water"], f"แฮนดิแคป {away} {fmt_line(-lc)} @{hc['away_water']:.2f}"
+        return aw, f"แฮนดิแคป {away} {fmt_line(-lc)} @{aw:.2f}"
     if mk == "OU_OVER":
-        w = m["ou"]["current"]["over"]
+        w = f["over_water_c"]
         return w, f"สูง (Over) {f['ou_c']:g} @{w:.2f}"
     if mk == "OU_UNDER":
-        w = m["ou"]["current"]["under"]
+        w = f["under_water_c"]
         return w, f"ต่ำ (Under) {f['ou_c']:g} @{w:.2f}"
     idx = 0 if mk == "X12_HOME" else 2
-    o = m["x12"]["current"][idx]
+    o = f["x12_cur"][idx]
     return o - 1.0, f"1X2 {home if idx == 0 else away} ชนะ @{o:.2f}"
 
 
@@ -1250,20 +1256,26 @@ def role_outcomes(rec, outcomes):
     return d
 
 
+def accumulate_stats(stats, tags, roles, P):
+    """เพิ่มผลของ 1 นัดเข้าสถิติของทุกชุดเงื่อนไข (tags) x ทางเลือก"""
+    for k in range(1, P["disc_max_combo"] + 1):
+        for combo in itertools.combinations(tags, k):
+            for role, r in roles.items():
+                s_ = stats.setdefault((combo, role), [0, 0.0])
+                s_[0] += 1
+                s_[1] += (1 + r) / 2
+
+
 def discover_rules(store, verbose=True):
     """ค้นหารูปแบบ (ชุดเงื่อนไข tags) ที่ชนะ/แพ้ซ้ำอย่างมีนัยสำคัญ แล้วแปลงเป็น Rule ใหม่"""
     P, S = store.params, store.state
-    stats = {}
-    for rec in store.history:
-        if rec.get("status") != "settled":
-            continue
-        tags, roles = rec["features"]["tags"], rec["role_r"]
-        for k in range(1, P["disc_max_combo"] + 1):
-            for combo in itertools.combinations(tags, k):
-                for role, r in roles.items():
-                    s = stats.setdefault((combo, role), [0, 0.0])
-                    s[0] += 1
-                    s[1] += (1 + r) / 2
+    stats = getattr(store, "inc_stats", None)          # MemStore (backtest) สะสมสถิติเองทีละนัด
+    if stats is None:
+        stats = {}
+        for rec in store.history:
+            if rec.get("status") != "settled":
+                continue
+            accumulate_stats(stats, rec["features"]["tags"], rec["role_r"], P)
 
     learned = S["learned_rules"]
     for lr in learned:                               # รีเฟรชสถิติ Rule เดิม
@@ -2012,6 +2024,20 @@ def cmd_delete(a):
     print(f"ลบแล้ว {n} รายการ" if n else "ไม่พบ id ที่ระบุ")
 
 
+def cmd_backtest(a):
+    import backtest as bt
+    store = Store(a.data_dir)
+    res = bt.run_backtest(store.history, {"disc_min_n": a.min_n} if a.min_n else None, permute=a.perm)
+    print(bt.text_summary(res))
+    if res.get("perm"):
+        pm = res["perm"]
+        print(f"permutation ({pm['B']} รอบ): กำไรจากการเรียนรู้ {pm['obs']:+.3f} เทียบค่ากลางเมื่อสุ่ม {pm['null_mean']:+.3f} (±{pm['null_sd']:.3f}) p = {pm['p']:.3f}")
+    if a.html:
+        with open(a.html, "w", encoding="utf-8") as fh:
+            fh.write(bt.report_document(res))
+        print("บันทึกรายงาน HTML ที่", a.html)
+
+
 def cmd_learn(a):
     store = Store(a.data_dir)
     new = discover_rules(store)
@@ -2082,6 +2108,11 @@ def main():
     p.add_argument("id")
     p.add_argument("score", help="เหย้า-เยือน เช่น 2-1")
     p.set_defaults(fn=cmd_settle)
+    p = sp.add_parser("backtest", help="ทดสอบย้อนหลัง: ไม่เรียนรู้ vs เรียนรู้ต่อเนื่อง")
+    p.add_argument("--perm", type=int, default=60, help="จำนวนรอบสุ่มสลับสกอร์ (0 = ไม่รัน)")
+    p.add_argument("--min-n", type=int, default=0, help="จำนวนนัดขั้นต่ำก่อนสร้าง Rule ใหม่ (0 = ค่าตั้งต้น)")
+    p.add_argument("--html", help="บันทึกรายงาน HTML ลงไฟล์นี้")
+    p.set_defaults(fn=cmd_backtest)
     p = sp.add_parser("edit", help="แก้สกอร์ที่ใส่ผิด แล้วคำนวณการเรียนรู้ใหม่")
     p.add_argument("id")
     p.add_argument("score", help="เหย้า-เยือน เช่น 2-1")
