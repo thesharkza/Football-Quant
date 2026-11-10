@@ -13,10 +13,11 @@ import random
 
 import football_quant_v58 as q
 
-ARMS = ("static", "weights", "full")
+ARMS = ("static", "weights", "full", "legacy")
 ARM_LABEL = {"static": "ไม่เรียนรู้ (Rule เดิม)", "weights": "เรียนรู้เฉพาะน้ำหนัก Rule",
-             "full": "เรียนรู้เต็มรูปแบบ (+สร้าง Rule ใหม่)"}
-ARM_COLOR = {"static": "#94a3b8", "weights": "#fbbf24", "full": "#2dd4bf"}
+             "full": "เรียนรู้แบบมีด่านคัดกรอง (Rule ใหม่เริ่มเป็นเงา)",
+             "legacy": "เรียนรู้แบบเดิม (ใช้ Rule ใหม่ทันที)"}
+ARM_COLOR = {"static": "#94a3b8", "weights": "#fbbf24", "full": "#2dd4bf", "legacy": "#f87171"}
 MIN_RELIABLE = 30          # ต่ำกว่านี้ถือว่าข้อมูลน้อยเกินสรุป
 
 
@@ -25,7 +26,7 @@ class MemStore:
 
     def __init__(self, params=None):
         self.state = {"weights": dict(q.DEFAULT_WEIGHTS), "rule_stats": {}, "learned_rules": [],
-                      "params": dict(params or {}), "meta": {"next_learned": 1, "schema": "5.9"}}
+                      "params": dict(params or {}), "meta": {"next_learned": 1, "schema": "6.0"}, "lifecycle": {}}
         self.history = []
         self.inc_stats = {}
 
@@ -91,6 +92,8 @@ def _boot(diffs, B, seed):
 def _walk(recs, scores, params):
     """เดินตามลำดับทีละนัด (ไม่มองอนาคต) คืน (bets ต่อแบบ, stores, จำนวนที่ข้าม)"""
     stores = {k: MemStore(params) for k in ARMS}
+    stores["legacy"].legacy_learned = True            # นโยบายเดิม: Rule ที่สร้างเองมีผลทันที
+    stores["legacy"].include_manual = False           # และไม่มี Rule ทดลอง R28-R40
     bets = {k: [] for k in ARMS}
     skipped = 0
     for rec, (hg, ag) in zip(recs, scores):
@@ -110,11 +113,13 @@ def _walk(recs, scores, params):
                             "profit": q.profit(halves, pick["price_win"]), "strength": pick["strength"],
                             "n_rules": len(st.state["learned_rules"])})
             tmp = {"contribs": contribs, "features": f, "status": "settled", "role_r": roles}
-            if k in ("weights", "full"):
+            if k in ("weights", "full", "legacy"):
                 q.update_weights(st, tmp, outcomes)
-            if k == "full":
+            if k in ("full", "legacy"):
+                q.lifecycle_update(st, f, outcomes)
                 q.accumulate_stats(st.inc_stats, f["tags"], roles, st.params)
                 q.discover_rules(st, verbose=False)
+                st.state["meta"]["settled"] = st.state["meta"].get("settled", 0) + 1
     return bets, stores, skipped
 
 
@@ -132,10 +137,11 @@ def run_backtest(history, params=None, boot=4000, seed=11, permute=0):
     n = len(bets["static"])
     out = {"n": n, "skipped": skipped, "bets": bets, "metrics": {k: _metrics(v) for k, v in bets.items()},
            "min_disc": stores["full"].params["disc_min_n"], "learned": stores["full"].state["learned_rules"],
+           "lifecycle": stores["full"].state.get("lifecycle", {}),
            "weights": {k: dict(st.state["weights"]) for k, st in stores.items()}, "perm": None}
     out["compare"] = {}
     if n >= 2:
-        for k in ("weights", "full"):
+        for k in ("weights", "full", "legacy"):
             d = [bets[k][i]["profit"] - bets["static"][i]["profit"] for i in range(n)]
             changed = sum(1 for i in range(n) if bets[k][i]["market"] != bets["static"][i]["market"])
             better = sum(1 for x in d if x > 1e-9)
@@ -169,9 +175,9 @@ def verdict(res):
         tag, title = "small", f"ข้อมูลยังน้อยเกินสรุป (n = {n}, ควรมีอย่างน้อย {MIN_RELIABLE} นัด)"
         lines.append("ผลต่างที่เห็นส่วนใหญ่เกิดจากความบังเอิญ จึงยังไม่ควรใช้ตัดสินว่าแบบไหนดีกว่า")
     elif cf["lo"] > 0 and perm_ok:
-        tag, title = "full", "แบบเรียนรู้เต็มรูปแบบดีกว่า และผ่านทั้งการทดสอบ bootstrap และการสุ่มสลับสกอร์"
+        tag, title = "full", "แบบเรียนรู้มีด่านคัดกรองดีกว่า และผ่านทั้งการทดสอบ bootstrap และการสุ่มสลับสกอร์"
         if perm is None:
-            title = "แบบเรียนรู้เต็มรูปแบบดีกว่า (bootstrap 95%) · ยังไม่ได้รันการทดสอบสุ่มสลับสกอร์ จึงควรระวัง"
+            title = "แบบเรียนรู้มีด่านคัดกรองดีกว่า (bootstrap 95%) · ยังไม่ได้รันการทดสอบสุ่มสลับสกอร์ จึงควรระวัง"
     elif cf["hi"] < 0:
         tag, title = "static", "แบบไม่เรียนรู้ดีกว่าอย่างมีนัยสำคัญ (ช่วงเชื่อมั่น 95%)"
     else:
@@ -185,7 +191,7 @@ def verdict(res):
     if mf.get("max_dd") is not None and mst.get("max_dd") is not None:
         a, b = mf["max_dd"], mst["max_dd"]
         if abs(a - b) > 0.5:
-            lines.append(("ความมั่นคง: แบบเรียนรู้เต็มรูปแบบมี drawdown ต่ำกว่า" if a < b else "ความมั่นคง: แบบไม่เรียนรู้มี drawdown ต่ำกว่า")
+            lines.append(("ความมั่นคง: แบบเรียนรู้มีด่านคัดกรองมี drawdown ต่ำกว่า" if a < b else "ความมั่นคง: แบบไม่เรียนรู้มี drawdown ต่ำกว่า")
                          + f" ({a:.2f} เทียบ {b:.2f} หน่วย) · เป็นค่าจากตัวอย่างนี้ ไม่ใช่การยืนยันในระยะยาว")
     if cf["changed"] == 0:
         lines.append("ทั้งสองแบบฟันธงเหมือนกันทุกนัด (ระบบยังเรียนรู้ไม่พอที่จะเปลี่ยนการตัดสินใจ) จึงไม่มีความต่าง")
@@ -194,7 +200,7 @@ def verdict(res):
 
 # ------------------------------------------------------------------ HTML
 CSS = """
-.fq-cmp { display:grid; grid-template-columns:minmax(0,1.5fr) repeat(3,minmax(0,1fr)); gap:8px; align-items:center;
+.fq-cmp { display:grid; grid-template-columns:minmax(0,1.4fr) repeat(4,minmax(0,1fr)); gap:8px; align-items:center;
           padding:8px 0; border-bottom:1px solid var(--line); font-size:.84rem; }
 .fq-cmp:last-child { border-bottom:none; }
 .fq-cmp.head { color:var(--mut); font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; padding-top:0; }
@@ -207,7 +213,7 @@ CSS = """
 .fq-verdict.static { background:rgba(251,191,36,.08); border-color:rgba(253,224,71,.3); }
 .fq-verdict.small, .fq-verdict.nodiff, .fq-verdict.none { background:rgba(148,163,184,.1); border-color:rgba(148,163,184,.3); }
 .fq-verdict .t { font-size:1.12rem; font-weight:700; margin-bottom:6px; } .fq-verdict ul { margin:6px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; line-height:1.6; }
-@media (max-width: 820px) { .fq-cmp { grid-template-columns:minmax(0,1.3fr) repeat(3,minmax(0,1fr)); font-size:.76rem; gap:4px; } }
+@media (max-width: 820px) { .fq-cmp { grid-template-columns:minmax(0,1.2fr) repeat(4,minmax(0,1fr)); font-size:.76rem; gap:4px; } }
 """
 
 
@@ -246,7 +252,7 @@ def _svg_curves(series, n):
                      f'<text x="{L - 6}" y="{y + 4:.1f}" text-anchor="end" font-size="11" fill="#8fa3c0">{lab}</text>')
     parts.append(f'<text x="{L}" y="{H - 6}" font-size="11" fill="#8fa3c0">นัดที่ 1</text>'
                  f'<text x="{W - 8}" y="{H - 6}" text-anchor="end" font-size="11" fill="#8fa3c0">นัดที่ {n - 1}</text>')
-    for k in ("static", "weights", "full"):
+    for k in ARMS:
         s = series[k]
         pts = " ".join(f"{X(i):.1f},{Y(v):.1f}" for i, v in enumerate(s))
         parts.append(f'<polyline fill="none" stroke="{ARM_COLOR[k]}" stroke-width="{2.6 if k == "full" else 2}" '
@@ -303,11 +309,11 @@ def report_html(res):
                    f'<i class="{"p" if x >= 0 else "n"}" style="height:{max(abs(x) / mx * 50, 0 if abs(x) < 1e-9 else 3):.0f}%"></i></div>'
                    for i, x in enumerate(cf["diffs"][-60:]))
     sign = "fq-up" if cf["lo"] > 0 else "fq-down" if cf["hi"] < 0 else "fq-mut"
-    stat = (f'<div class="fq-small fq-mut" style="margin-top:8px">กำไรต่อไม้ที่ต่างกัน (เรียนรู้เต็ม − ไม่เรียนรู้): '
+    stat = (f'<div class="fq-small fq-mut" style="margin-top:8px">กำไรต่อไม้ที่ต่างกัน (เรียนรู้มีด่าน − ไม่เรียนรู้): '
             f'<b class="{sign}">{cf["mean"]:+.3f}</b> หน่วย · ช่วงเชื่อมั่น 95% (bootstrap) [{cf["lo"]:+.3f}, {cf["hi"]:+.3f}] · '
             f'ความน่าจะเป็นที่ต่าง > 0 ≈ {cf["p_pos"]:.0%}</div>'
             f'<div class="fq-small fq-mut">ฟันธงต่างกัน {cf["changed"]}/{n} นัด · แบบเรียนรู้ดีกว่า {cf["better"]} นัด · แย่กว่า {cf["worse"]} นัด</div>')
-    out.append('<div class="fq-sec">ความต่างรายนัดของแบบเรียนรู้เต็มรูปแบบ <small>แท่งเขียว = ดีกว่า · แดง = แย่กว่าแบบไม่เรียนรู้ · ล่าสุด 60 นัด</small></div>')
+    out.append('<div class="fq-sec">ความต่างรายนัดของแบบเรียนรู้มีด่านคัดกรอง <small>แท่งเขียว = ดีกว่า · แดง = แย่กว่าแบบไม่เรียนรู้ · ล่าสุด 60 นัด</small></div>')
     out.append(f'<div class="fq-card"><div class="fq-pl">{bars}</div>{stat}</div>')
 
     pm = res.get("perm")
@@ -321,15 +327,16 @@ def report_html(res):
                    f'<b>p = {pm["p"]:.3f}</b> {_chip_ok("ผ่าน (p < 0.05)") if pm["p"] < 0.05 else ""}</div></div>')
 
     # สถานะการเรียนรู้ตอนท้าย
-    lr = res["learned"]
-    lrows = ""
-    for r in sorted(lr, key=lambda r: -(r["wr"] * r["n"]))[:6]:
-        tags_txt = " + ".join(r["tags"])
-        chip = _chip_ok("ชนะ {:.0%} / {:.0f} นัด".format(r["wr"], r["n"]))
-        lrows += (f'<div class="fq-hist"><div>{e(tags_txt)}<small>→ {e(q.ROLE_TH[r["role"]])}</small></div><div>{chip}</div></div>')
-    out.append('<div class="fq-sec">สิ่งที่แบบเรียนรู้เต็มรูปแบบสร้างขึ้น <small>ณ นัดสุดท้ายของการทดสอบ</small></div>')
-    out.append(f'<div class="fq-card"><div class="fq-small fq-mut" style="margin-bottom:6px">เกณฑ์สร้าง Rule ใหม่: ต้องมีอย่างน้อย {res["min_disc"]} นัดที่รูปแบบซ้ำ · '
-               f'สร้างได้ {len(lr)} Rule</div>{lrows or "<div class=fq-mut>ยังไม่มี Rule ที่ผ่านเกณฑ์</div>"}</div>')
+    import dashboard as d
+    lg = cp.get("legacy")
+    if lg:
+        out.append('<div class="fq-sec">นโยบายเดิมเทียบนโยบายใหม่ <small>ผลของการกักกัน Rule ใหม่ไว้เป็นเงาก่อนใช้งาน</small></div>')
+        out.append(f'<div class="fq-card"><div class="fq-small">ใช้ Rule ที่สร้างเองทันที (แบบเดิม) − ไม่เรียนรู้: <b class="{"fq-up" if lg["mean"] > 0 else "fq-down"}">{lg["mean"]:+.3f}</b> '
+                   f'ต่อไม้ [{lg["lo"]:+.3f}, {lg["hi"]:+.3f}] · ฟันธงต่างกัน {lg["changed"]} นัด<br>'
+                   f'แบบมีด่านคัดกรอง − ไม่เรียนรู้: <b class="{"fq-up" if cf["mean"] > 0 else "fq-down"}">{cf["mean"]:+.3f}</b> ต่อไม้ [{cf["lo"]:+.3f}, {cf["hi"]:+.3f}] · '
+                   f'ฟันธงต่างกัน {cf["changed"]} นัด</div></div>')
+    p_ = dict(q.DEFAULT_PARAMS)
+    out.append(d.rule_lifecycle({"lifecycle": res.get("lifecycle") or {}, "learned_rules": res["learned"]}, p_))
 
     notes = ["ผลทั้งหมดคำนวณจากประวัติที่บันทึกในระบบ ฟันธงซ้ำด้วย features ที่เก็บไว้ ไม่ใช่ไม้ที่คุณเดิมพันจริง",
              "ทุกแบบเริ่มจากน้ำหนักเริ่มต้นเท่ากัน ไม่ใช้สถานะที่ระบบจริงเรียนรู้สะสมไว้ จึงทดสอบตั้งแต่ “เริ่มเรียนรู้จากศูนย์”",
