@@ -28,6 +28,7 @@ if st.query_params.get("diag") == "1":
 import football_quant_v58 as q
 import dashboard as d
 import backtest as bt
+import access
 
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
@@ -213,7 +214,46 @@ def _clear_token_param():
         del st.query_params["s"]
 
 
-if _pw:
+def _auth_configured():
+    try:
+        return "auth" in st.secrets and bool(st.secrets["auth"].get("client_id"))
+    except Exception:  # noqa
+        return False
+
+
+AUTH_ON = _auth_configured()
+ADMINS = access.admin_emails(secret)
+ROLE, EMAIL = "admin", None
+_GKEY = None
+
+
+def _hero(sub):
+    st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Football Quant</div>'
+                f'<div class="s">{esc(sub)}</div></div></div>', unsafe_allow_html=True)
+
+
+if AUTH_ON:
+    # ---- ล็อกอินด้วย Google + สิทธิ์ 3 ระดับ (Admin / User / Local) ----
+    if not st.user.is_logged_in:
+        _hero("เข้าสู่ระบบด้วยบัญชี Google ที่ได้รับเชิญ")
+        if st.session_state.pop("idle_out", False):
+            st.info(f"หมดเวลาเพราะไม่ได้ใช้งานเกิน {IDLE_SEC // 60} นาที กรุณาเข้าสู่ระบบใหม่")
+        st.button("🔐 เข้าสู่ระบบด้วย Google", type="primary", on_click=st.login)
+        st.stop()
+    EMAIL = access.norm(st.user.get("email"))
+    ROLE = access.role_of(EMAIL, ADMINS, access.load(DATA_DIR))
+    if ROLE is None:
+        _hero("บัญชีนี้ยังไม่ได้รับเชิญ")
+        st.warning(f"อีเมล {EMAIL or '(ไม่ทราบ)'} ยังไม่ได้รับเชิญให้ใช้งาน · ส่งอีเมลนี้ให้ผู้ดูแลระบบเพื่อขอสิทธิ์")
+        st.button("ออกจากระบบ", on_click=st.logout)
+        st.stop()
+    _GKEY = "g:" + EMAIL
+    if _GKEY in q.SESSIONS and not q.session_touch(_GKEY, IDLE_SEC):
+        st.session_state["idle_out"] = True       # หมดเวลา -> ออกจากระบบ ต้องล็อกอินใหม่
+        st.logout()
+        st.stop()
+    q.SESSIONS[_GKEY] = time.time()
+elif _pw:
     # โทเค็นอยู่ในลิงก์ (?s=...) จึงรอดเมื่อมือถือพับแอป/เชื่อมต่อใหม่ แต่หมดอายุทันทีเมื่อเว้นว่างเกินเวลา
     _tok = st.session_state.get("tok") or st.query_params.get("s")
     if _tok and q.session_touch(_tok, IDLE_SEC):
@@ -241,8 +281,8 @@ if _pw:
 
 @st.fragment(run_every=15)
 def idle_guard():
-    """ตรวจเบื้องหลังทุก 15 วินาที: ถ้าเกินเวลาไม่ได้ใช้งาน ให้กลับหน้าใส่รหัสผ่านทันที (ไม่ต่ออายุเอง)"""
-    if not q.session_alive(st.session_state.get("tok"), IDLE_SEC):
+    """ตรวจเบื้องหลังทุก 15 วินาที: ถ้าเกินเวลาไม่ได้ใช้งาน ให้กลับหน้าเข้าสู่ระบบทันที (ไม่ต่ออายุเอง)"""
+    if not q.session_alive(_GKEY if AUTH_ON else st.session_state.get("tok"), IDLE_SEC):
         st.rerun()
 
 
@@ -250,7 +290,19 @@ st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Fo
             '<span class="pill">V5.9</span></div><div class="s">วิเคราะห์ราคาบอลอัตโนมัติ · ฟันธงเดี่ยว · เรียนรู้จากผลจริง</div></div></div>',
             unsafe_allow_html=True)
 ss = st.session_state
-if _pw:
+IS_ADMIN = ROLE == "admin"
+if AUTH_ON:
+    idle_guard()
+    _acc = access.load(DATA_DIR)
+    _rem = access.remaining(EMAIL, ROLE, _acc)
+    _quota = "ไม่จำกัด" if _rem is None else f"เหลือ {_rem}/{access.limit_of(ROLE, _acc)} ครั้งวันนี้"
+    _c1, _c2 = st.columns([5, 1])
+    _c1.markdown(f'<div class="chips"><span class="chip">{esc(EMAIL)}</span><span class="chip ok">{access.ROLE_TH[ROLE]}</span>'
+                 f'<span class="chip">{esc(_quota)}</span></div>', unsafe_allow_html=True)
+    if _c2.button("ออกจากระบบ", key="logout"):
+        q.session_revoke(_GKEY)
+        st.logout()
+elif _pw:
     idle_guard()
     _c1, _c2 = st.columns([5, 1])
     if _c2.button("ออกจากระบบ", key="logout"):
@@ -397,7 +449,13 @@ def render_result(res, after_pick=None, key="r"):
 
 
 # ---------------------------------------------------------------- แท็บ
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎯 วิเคราะห์", "🏁 บันทึกผล", "📈 สถิติ", "🧪 ทดสอบย้อนหลัง", "💾 สำรองข้อมูล"])
+if IS_ADMIN:
+    _tabs = ["🎯 วิเคราะห์", "🏁 บันทึกผล", "📈 สถิติ", "🧪 ทดสอบย้อนหลัง", "💾 สำรองข้อมูล"] + (["👥 ผู้ใช้"] if AUTH_ON else [])
+    _T = st.tabs(_tabs)
+    tab1, tab2, tab3, tab4, tab5 = _T[:5]
+    tab6 = _T[5] if AUTH_ON else None
+else:
+    tab1 = st.container()                         # User / Local เห็นเฉพาะหน้าวิเคราะห์
 
 # ================================================================ TAB 1
 with tab1:
@@ -410,16 +468,28 @@ with tab1:
     t1, t2 = st.columns(2)
     do_research = t1.toggle("ค้นหาบริบทแมตช์อัตโนมัติ", value=True, key="opt_research",
                             help="ให้ Gemini ค้นหาข้อมูลจริงทาง Google Search (คิดค่าบริการตามจำนวนคำค้น)")
-    do_save = t2.toggle("บันทึกสัญญาณลงประวัติ", value=True, key="opt_save")
-    go = st.button("🚀 วิเคราะห์อัตโนมัติ", type="primary", disabled=not files)
+    if IS_ADMIN:
+        do_save = t2.toggle("บันทึกสัญญาณลงประวัติ", value=True, key="opt_save")
+    else:
+        do_save = False                                 # User / Local ไม่บันทึกผลลงระบบ
+    quota_left = access.remaining(EMAIL, ROLE, access.load(DATA_DIR)) if AUTH_ON else None
+    if quota_left == 0:
+        st.markdown(f'<div class="res lose">ใช้สิทธิ์วิเคราะห์ของวันนี้ครบแล้ว · รีเซ็ตในอีก {access.reset_in()} (เที่ยงคืนเวลาไทย)</div>',
+                    unsafe_allow_html=True)
+    go = st.button("🚀 วิเคราะห์อัตโนมัติ", type="primary", disabled=not files or quota_left == 0)
     box = st.container()
     opts = get_opts()
     if go:
         if not opts["api_key"]:
             with box:
                 st.error("ยังไม่ได้ตั้งค่า GEMINI_API_KEY (ใส่ที่ Secrets หรือช่องใน “ตั้งค่าขั้นสูง”)")
+        elif AUTH_ON and not access.reserve(DATA_DIR, EMAIL, ROLE):
+            with box:
+                st.error(f"ใช้สิทธิ์วิเคราะห์ของวันนี้ครบแล้ว · รีเซ็ตในอีก {access.reset_in()}")
         else:
             res = run_pipeline(files, opts, do_research, do_save, box)
+            if not res and AUTH_ON:
+                access.refund(DATA_DIR, EMAIL, ROLE)      # ล้มเหลว -> คืนสิทธิ์
             if res and res.get("_gate"):
                 ss["gate"] = res
                 ss.pop("res", None)
@@ -437,8 +507,8 @@ with tab1:
             items = "".join(f"<li>{esc(x)}</li>" for x in g["critical"])
             st.markdown(f'<div class="res lose">พบข้อมูลที่อาจอ่านผิดจากรูป ({len(g["critical"])} จุด) ระบบหยุดไว้ก่อนวิเคราะห์'
                         f'<ul style="margin:8px 0 0;padding-left:18px;font-weight:400">{items}</ul></div>', unsafe_allow_html=True)
-            st.caption("ตรวจตัวเลขในรูปเทียบกับข้อมูลที่อ่านได้ (เปิด “⚙ ตั้งค่าขั้นสูง” ด้านล่างเพื่อแก้ แล้วกด “วิเคราะห์ใหม่จากข้อมูลที่แก้ไข”) "
-                       "หรือถ้าตรวจแล้วข้อมูลถูกต้อง กดวิเคราะห์ต่อได้")
+            st.caption(("ตรวจตัวเลขในรูปเทียบกับข้อมูลที่อ่านได้ (เปิด “⚙ ตั้งค่าขั้นสูง” ด้านล่างเพื่อแก้ แล้วกด “วิเคราะห์ใหม่จากข้อมูลที่แก้ไข”) "
+                        if IS_ADMIN else "ตรวจตัวเลขในรูปอีกครั้ง ") + "หรือถ้าตรวจแล้วข้อมูลถูกต้อง กดวิเคราะห์ต่อได้ (ไม่เสียสิทธิ์เพิ่ม)")
             g1, g2 = st.columns(2)
             if g1.button("▶ ข้อมูลถูกต้อง วิเคราะห์ต่อ", type="primary", key="gate_go"):
                 try:
@@ -453,6 +523,10 @@ with tab1:
     if ss.get("res"):
         with box:
             render_result(ss["res"], key="t1")
+
+    if not IS_ADMIN:
+        st.caption("ผลวิเคราะห์เป็นแบบจำลองเชิงสถิติ ไม่รับประกันผล และไม่ใช่คำแนะนำทางการเงิน")
+        st.stop()                                     # User / Local: จบที่หน้าวิเคราะห์
 
     with st.expander("⚙ ตั้งค่าขั้นสูง"):
         st.text_input("โมเดล Gemini", value=q.DEFAULT_MODEL, key="opt_model")
@@ -727,3 +801,59 @@ with tab5:
             cloud_warn()
         except Exception:  # noqa
             st.error("ไฟล์สำรองไม่ถูกต้อง")
+
+
+# ================================================================ TAB 6 (จัดการผู้ใช้ · Admin)
+if tab6 is not None:
+    with tab6:
+        acc = access.load(DATA_DIR)
+        if access.ACCESS_REMOTE.get("ok") is False:
+            st.warning(f"บันทึกรายชื่อ/โควตาขึ้นที่เก็บถาวรไม่สำเร็จ: {access.ACCESS_REMOTE['error']}")
+        card("ระดับผู้ใช้", '<div class="muted">Admin = อีเมลใน Secrets <b>ADMIN_EMAILS</b> · User / Local = ต้องได้รับเชิญจากหน้านี้ · '
+             'User/Local เห็นเฉพาะหน้าวิเคราะห์ และไม่บันทึกผล · โควตารีเซ็ตเที่ยงคืนเวลาไทย · นับเฉพาะการวิเคราะห์ที่สำเร็จ</div>')
+        st.markdown('<div class="fq"><div class="fq-sec">เชิญผู้ใช้</div></div>', unsafe_allow_html=True)
+        i1, i2, i3 = st.columns([3, 1.3, 1])
+        new_email = i1.text_input("อีเมล Google", key="inv_email", placeholder="name@gmail.com", label_visibility="collapsed")
+        new_role = i2.selectbox("ระดับ", ["user", "local"], key="inv_role", label_visibility="collapsed",
+                                format_func=lambda r: f"{access.ROLE_TH[r]} ({acc['limits'][r]} ครั้ง/วัน)")
+        if i3.button("เชิญ", type="primary", key="inv_go"):
+            try:
+                if access.norm(new_email) in ADMINS:
+                    st.info("อีเมลนี้เป็น Admin อยู่แล้ว")
+                else:
+                    access.invite(DATA_DIR, new_email, new_role, EMAIL)
+                    st.success(f"เชิญ {access.norm(new_email)} เป็น {access.ROLE_TH[new_role]} แล้ว")
+                    st.rerun()
+            except ValueError as e_:
+                st.error(str(e_))
+        st.caption("ถ้าแอปใน Google Cloud ยังอยู่สถานะ Testing ต้องเพิ่มอีเมลนี้ใน Test users ด้วย ไม่เช่นนั้น Google จะไม่ให้ล็อกอิน")
+        st.markdown('<div class="fq"><div class="fq-sec">ผู้ใช้ทั้งหมด</div></div>', unsafe_allow_html=True)
+        rows = [[e_, "Admin", "ไม่จำกัด", "(Secrets)"] for e_ in sorted(ADMINS)]
+        for e_, u in sorted(acc["users"].items()):
+            rows.append([e_, access.ROLE_TH[u["role"]], f"{access.used_today(e_, acc)}/{access.limit_of(u['role'], acc)}", u.get("added", "")])
+        st.markdown(html_table(["อีเมล", "ระดับ", "ใช้วันนี้", "เชิญเมื่อ"], rows), unsafe_allow_html=True)
+        if acc["users"]:
+            m1, m2 = st.columns([3, 2])
+            sel = m1.selectbox("เลือกผู้ใช้", sorted(acc["users"]), key="usr_sel")
+            act = m2.selectbox("การกระทำ", ["เปลี่ยนเป็น User", "เปลี่ยนเป็น Local", "รีเซ็ตโควตาวันนี้", "ลบผู้ใช้"], key="usr_act")
+            if st.checkbox("ยืนยันการกระทำ", key="usr_ok") and st.button("ดำเนินการ", key="usr_go"):
+                if act == "ลบผู้ใช้":
+                    access.remove(DATA_DIR, sel, EMAIL)
+                elif act == "รีเซ็ตโควตาวันนี้":
+                    access.reset_usage(DATA_DIR, sel, EMAIL)
+                else:
+                    access.invite(DATA_DIR, sel, "user" if "User" in act else "local", EMAIL)
+                st.success("เรียบร้อย")
+                st.rerun()
+        st.markdown('<div class="fq"><div class="fq-sec">โควตาต่อวัน</div></div>', unsafe_allow_html=True)
+        l1, l2, l3 = st.columns([1, 1, 1])
+        nu = l1.number_input("User (ครั้ง/วัน)", 0, 100, int(acc["limits"]["user"]), key="lim_u")
+        nl = l2.number_input("Local (ครั้ง/วัน)", 0, 100, int(acc["limits"]["local"]), key="lim_l")
+        if l3.button("บันทึกโควตา", key="lim_go"):
+            access.set_limits(DATA_DIR, nu, nl, EMAIL)
+            st.success("บันทึกแล้ว")
+            st.rerun()
+        if acc.get("log"):
+            with st.expander("ประวัติการจัดการผู้ใช้"):
+                st.markdown(html_table(["เวลา", "โดย", "การกระทำ", "อีเมล", "รายละเอียด"], list(reversed(acc["log"][-30:]))),
+                            unsafe_allow_html=True)
