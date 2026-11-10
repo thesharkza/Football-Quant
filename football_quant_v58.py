@@ -220,7 +220,7 @@ def build_features(m, P):
         "dog_name": home if dog == "home" else away,
         "fav_hdp": "HDP_" + fav.upper(), "dog_hdp": "HDP_" + dog.upper(),
         "fav_x12": "X12_" + fav.upper(), "dog_x12": "X12_" + dog.upper(),
-        "line_o": lo, "line_c": lc, "fav_line_c": abs(lc), "fav_line_o": abs(lo),
+        "line_o": lo, "line_c": lc, "fav_line_c": abs(lc), "fav_line_o": -lo if (lc < 0 or (lc == 0 and fav == "home")) else lo,
         "x12_open": x12["open"], "x12_cur": x12["current"],
     }
 
@@ -232,6 +232,10 @@ def build_features(m, P):
     do = ho["away_water"] if fav == "home" else ho["home_water"]
     dc = hc["away_water"] if fav == "home" else hc["home_water"]
     f["fav_drop"], f["dog_drop"] = fo - fc, do - dc    # + = ค่าน้ำลด
+    pb = (m.get("water_chg") or {}).get("hdp")
+    if pb and abs(lc - lo) < 1e-9:                     # เรตหลักนิ่ง: ใช้มัธยฐานการเปลี่ยนแปลงรายโบรกเกอร์ (ไม่ปนผลจากชุดเจ้าที่ต่างกัน)
+        f["fav_drop"] = pb["home_water"] if fav == "home" else pb["away_water"]
+        f["dog_drop"] = pb["away_water"] if fav == "home" else pb["home_water"]
     f["fav_water_c"], f["dog_water_c"] = fc, dc
     # ค่าน้ำที่ปรับตามการเปลี่ยนเรตแล้ว: เรตลึกขึ้น -> ค่าน้ำทีมต่อสูงขึ้น/ทีมรองต่ำลงตามธรรมชาติ ไม่ใช่สัญญาณ
     sq = f["hdp_shift_fav"] / 0.25
@@ -255,6 +259,9 @@ def build_features(m, P):
         f["ou_shift"] = f["ou_c"] - f["ou_o"]
         f["over_drop"] = ou["open"]["over"] - ou["current"]["over"]
         f["under_drop"] = ou["open"]["under"] - ou["current"]["under"]
+        pbo = (m.get("water_chg") or {}).get("ou")
+        if pbo and abs(f["ou_shift"]) < 1e-9:
+            f["over_drop"], f["under_drop"] = pbo["over"], pbo["under"]
         f["over_water_c"], f["under_water_c"] = ou["current"]["over"], ou["current"]["under"]
 
     # --- สถิติ / H2H / มูลค่าทีม ---
@@ -1902,6 +1909,22 @@ def consolidate_books(m):
         else:
             m[key] = out
     m["n_books"] = len(books)
+    # การเปลี่ยนค่าน้ำรายโบรกเกอร์: เฉพาะเจ้าที่เรตเปิด = เรตปัจจุบัน = เรตหลักปัจจุบัน (เปิด - ปัจจุบัน, + = น้ำลด)
+    chg = {}
+    for key, f1, f2 in (("hdp", "home_water", "away_water"), ("ou", "over", "under")):
+        cur = (m.get(key) or {}).get("current") if isinstance(m.get(key), dict) else None
+        if not cur:
+            continue
+        d1, d2 = [], []
+        for b in books:
+            bo, bc = ((b.get(key) or {}).get("open") or {}), ((b.get(key) or {}).get("current") or {})
+            if all(_num(x.get(k)) for x in (bo, bc) for k in ("line", f1, f2)) and abs(bo["line"] - bc["line"]) < 1e-9 \
+                    and abs(bc["line"] - cur["line"]) < 1e-9:
+                d1.append(bo[f1] - bc[f1])
+                d2.append(bo[f2] - bc[f2])
+        if d1:
+            chg[key] = {f1: _med(d1), f2: _med(d2), "n": len(d1)}
+    m["water_chg"] = chg
     # สัดส่วนโบรกเกอร์ที่ขยับเรต HDP ไปทางเดียวกับเรตรวม (ใช้ใน Rule 17)
     m["hdp_agree"] = None
     h = m.get("hdp")
