@@ -546,18 +546,8 @@ with tab3:
     store = q.Store(DATA_DIR)
     S = store.state
     st.markdown(d.stats_dashboard(S, store.history), unsafe_allow_html=True)
-    with st.expander(f"🧠 Rule ที่ระบบสร้างเอง ({len(S['learned_rules'])})"):
-        if S["learned_rules"]:
-            st.markdown(html_table(["id", "สถานะ", "เงื่อนไข", "เล่น", "ชนะ", "นัด"],
-                                   [[r["id"], "เปิด" if r.get("enabled", True) else "ปิด", " + ".join(r["tags"]),
-                                     q.ROLE_TH[r["role"]], f"{r['wr']:.0%}", r["n"]] for r in S["learned_rules"]]),
-                        unsafe_allow_html=True)
-        else:
-            st.caption("ยังไม่มี — ต้องสะสมผลจริงอย่างน้อย ~10 นัดที่มีรูปแบบซ้ำกัน")
-        if st.button("ค้นหา Rule ใหม่จากประวัติอีกครั้ง"):
-            new = q.discover_rules(store, verbose=False)
-            store.save()
-            st.success(f"สร้าง Rule ใหม่ {len(new)} ข้อ") if new else st.info("ยังไม่พบรูปแบบใหม่ที่มีนัยสำคัญ")
+    st.markdown(d.score_ladder(store.history, store.params["breakeven_wr"]), unsafe_allow_html=True)
+    st.markdown(d.rule_lifecycle(S, store.params), unsafe_allow_html=True)
     with st.expander("🗑 ลบรายการในประวัติ"):
         opts_h = {r["id"]: f"{r['features']['home']} vs {r['features']['away']} ({'ผลแล้ว' if r['status'] == 'settled' else 'รอผล'})"
                   for r in reversed(store.history)}
@@ -582,11 +572,13 @@ with tab4:
         st.caption(f"ข้อมูลที่ใช้ได้: {n_done} นัด" + ("" if n_done >= bt.MIN_RELIABLE else f" · น้อยกว่า {bt.MIN_RELIABLE} นัด ผลที่ได้ใช้ตัดสินไม่ได้"))
         b1, b2 = st.columns(2)
         bt_min = b1.number_input("จำนวนนัดขั้นต่ำก่อนสร้าง Rule ใหม่", 3, 30, int(store.params["disc_min_n"]), key="bt_minn")
+        bt_mode = st.radio("วิธีรวมคะแนนสัญญาณ", ["sum", "grouped"], horizontal=True, key="bt_mode",
+                           format_func=lambda x: {"sum": "รวมทุก Rule (ปัจจุบัน)", "grouped": "นับกลุ่มข้อมูลละครั้ง (ไม่บวกซ้ำ)"}[x])
         bt_perm = b2.number_input("จำนวนรอบสุ่มสลับสกอร์ (0 = ไม่รัน)", 0, 200, 60, step=20, key="bt_perm",
                                   help="ยิ่งมากยิ่งแม่นแต่ช้าลง ใช้คำนวณ p-value ว่ากำไรจากการเรียนรู้สูงกว่าความบังเอิญหรือไม่")
         if st.button("▶ รัน Backtest", type="primary"):
             with st.spinner("กำลังทดสอบย้อนหลัง..."):
-                ss["bt"] = bt.run_backtest(store.history, {"disc_min_n": int(bt_min)}, permute=int(bt_perm))
+                ss["bt"] = bt.run_backtest(store.history, {"disc_min_n": int(bt_min), "score_mode": bt_mode}, permute=int(bt_perm))
         if ss.get("bt"):
             st.markdown(bt.report_html(ss["bt"]), unsafe_allow_html=True)
             st.download_button("⬇ ดาวน์โหลดรายงาน Backtest (HTML)", bt.report_document(ss["bt"]),
