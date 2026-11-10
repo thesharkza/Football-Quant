@@ -370,7 +370,7 @@ def res_from_record(rec, store):
 def render_result(res, after_pick=None, key="r"):
     f = res["f"]
     st.markdown(d.kpi_and_match(res), unsafe_allow_html=True)
-    st.caption("ความมั่นใจนี้แปลงจากคะแนนสัญญาณ ยังไม่ผ่านการสอบเทียบกับผลจริง ไม่ใช่ความน่าจะเป็นที่แท้จริง")
+    st.caption("ระดับสัญญาณจัดจากคะแนนของ Rule (ต่ำ < 1.2 ≤ กลาง < 2.5 ≤ สูง) ไม่ใช่โอกาสชนะ · ข้อมูลที่มียังไม่พบว่าระดับสูงชนะมากกว่า")
     if after_pick:
         after_pick()
     st.markdown(d.analysis_body(res), unsafe_allow_html=True)
