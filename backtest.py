@@ -26,7 +26,7 @@ class MemStore:
 
     def __init__(self, params=None):
         self.state = {"weights": dict(q.DEFAULT_WEIGHTS), "rule_stats": {}, "learned_rules": [],
-                      "params": dict(params or {}), "meta": {"next_learned": 1, "schema": "6.0"}, "lifecycle": {}}
+                      "params": {"freeze_weights": False, **(params or {})}, "meta": {"next_learned": 1, "schema": "6.0"}, "lifecycle": {}}
         self.history = []
         self.inc_stats = {}
 
@@ -111,7 +111,7 @@ def _walk(recs, scores, params):
             bets[k].append({"i": len(bets[k]), "id": rec["id"], "home": f.get("home", ""), "away": f.get("away", ""),
                             "market": pick["market"], "label": pick["label"], "r": r,
                             "profit": q.profit(halves, pick["price_win"]), "strength": pick["strength"],
-                            "n_rules": len(st.state["learned_rules"])})
+                            "n_rules": len(st.state["learned_rules"]), "skip": bool(pick.get("skip"))})
             tmp = {"contribs": contribs, "features": f, "status": "settled", "role_r": roles}
             if k in ("weights", "full", "legacy"):
                 q.update_weights(st, tmp, outcomes)
@@ -160,6 +160,9 @@ def run_backtest(history, params=None, boot=4000, seed=11, permute=0):
         sd_ = (sum((g - mean_) ** 2 for g in gains) / max(len(gains) - 1, 1)) ** 0.5
         out["perm"] = {"B": permute, "obs": obs, "null_mean": mean_, "null_sd": sd_,
                        "p": (1 + sum(1 for g in gains if g >= obs)) / (1 + permute)}
+    sb = bets["static"]
+    out["skip"] = {"played": _metrics([b for b in sb if not b["skip"]]), "skipped": _metrics([b for b in sb if b["skip"]]),
+                   "all": out["metrics"]["static"]}
     out["verdict"] = verdict(out)
     return out
 
@@ -325,6 +328,21 @@ def report_html(res):
                    f'<b>{pm["null_mean"]:+.3f}</b> (± {pm["null_sd"]:.3f})</div>'
                    f'<div style="margin-top:8px">ของจริง <b class="{"fq-up" if pm["p"] < 0.05 else "fq-mut"}">{pm["obs"]:+.3f}</b> · z ≈ {z:+.1f} · '
                    f'<b>p = {pm["p"]:.3f}</b> {_chip_ok("ผ่าน (p < 0.05)") if pm["p"] < 0.05 else ""}</div></div>')
+
+    sk = res.get("skip")
+    if sk and sk["skipped"].get("n"):
+        def _ln(lab, x):
+            if not x.get("n"):
+                return f'<div class="fq-cmp"><span class="k">{e(lab)}</span><span class="a">0</span><span class="a">–</span><span class="a">–</span><span class="a">–</span></div>'
+            return (f'<div class="fq-cmp"><span class="k">{e(lab)}</span><span class="a">{x["n"]}</span><span class="a">{_fmt(x["win_rate"], "pct")}</span>'
+                    f'<span class="a">{_fmt(x["profit"], "sgn")}</span><span class="a">{_fmt(x["roi"], "sgn")}</span></div>')
+        hd = '<div class="fq-cmp head"><span></span><span class="a">ไม้</span><span class="a">อัตราชนะ</span><span class="a">กำไร</span><span class="a">ROI/ไม้</span></div>'
+        pl, sp_ = sk["played"], sk["skipped"]
+        gap = (pl.get("roi") or 0) - (sp_.get("roi") or 0)
+        note = ("ไม้ที่ข้ามทำผลได้แย่กว่าไม้ที่เล่น (การข้ามน่าจะช่วย)" if gap > 0 else "ไม้ที่ข้ามทำผลได้ดีกว่าหรือพอ ๆ กับไม้ที่เล่น (การข้ามยังไม่ช่วย)")
+        out.append('<div class="fq-sec">ผลของเกณฑ์ “ข้าม” <small>Rule เดิมแช่แข็ง · ไม้ที่ถูกข้ามยังคำนวณเป็นไม้เงาเพื่อเทียบ</small></div>')
+        out.append(f'<div class="fq-card">{hd}{_ln("เล่นทุกนัด", sk["all"])}{_ln("เล่นเฉพาะไม้ที่ไม่ถูกข้าม", pl)}{_ln("ไม้ที่ถูกข้าม (เงา)", sp_)}'
+                   f'<div class="fq-small fq-mut" style="margin-top:8px">{e(note)} · ต้องมีไม้ที่ถูกข้ามหลายสิบไม้จึงจะสรุปได้</div></div>')
 
     # สถานะการเรียนรู้ตอนท้าย
     import dashboard as d
