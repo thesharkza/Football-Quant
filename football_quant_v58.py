@@ -72,12 +72,24 @@ DEFAULT_PARAMS = {
     "disc_max_new": 5,           # สร้าง Rule ใหม่สูงสุดต่อรอบ
     "disc_max_total": 40,
     "learned_base": 1.5,
+    "score_mode": "sum",         # sum = รวมคะแนนทุก Rule | grouped = นับกลุ่มข้อมูลละครั้ง (ไม่บวก Rule ที่ชี้ทางเดียวกันซ้ำ)
+    "false_giant_max_ratio": 3.5,  # Rule 27: มูลค่าทีมต่อ >= 3.5 เท่า ไม่ใช้ Rule 26 สวนรอง
+    "exclude_universal": True,   # ไม่ใช้เงื่อนไขที่จริงเกือบทุกนัด (เช่น ctx:league) สร้าง Rule
+    "universal_cov": 0.85,
+    # --- วงจรชีวิตของ Rule ที่ระบบสร้างเอง/Rule ทดลอง: เงา -> ปลดล็อค -> ถอด ---
+    "unlock_wr": 0.65,           # อัตราชนะนอกกลุ่มตัวอย่าง (out-of-sample) ขั้นต่ำเพื่อปลดล็อคทางลัด
+    "unlock_min_n": 30,          # จำนวนครั้งขั้นต่ำของทางลัด
+    "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
+    "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
+    "lb_z_fast": 1.28, "lb_z_judge": 1.645,
+    "retire_min_n": 20,          # ใช้ครบเท่านี้แล้วอัตราชนะต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ถอด
+    "decline_window": 10,        # ขนาดช่วงที่ใช้ตรวจว่าอัตราชนะลดลงต่อเนื่อง 3 ช่วง
 }
 
 DEFAULT_WEIGHTS = {
     "R1": 1.0, "R2": 1.5, "R3": 1.0, "R4": 1.0, "R5": 1.0, "R6": 1.0, "R7": 1.0,
     "R8": 1.0, "R9": 1.0, "R10": 1.0, "R11": 1.0, "R12": 1.0, "R14": 1.5, "R16": 1.0, "R17": 1.0, "R18": 1.0, "R19": 1.0,
-    "R20": 1.0, "R21": 1.0, "R22": 1.0, "R23": 1.0, "R24": 1.0, "R25": 1.5, "R26": 1.5, "R27": 1.0, "R28": 1.0,
+    "R20": 1.0, "R21": 1.0, "R22": 1.0, "R23": 1.0, "R24": 1.0, "R25": 1.5, "R26": 1.5, "X1": 1.0, "X2": 1.0,
 }
 
 RULE_NAMES = {
@@ -105,11 +117,25 @@ RULE_NAMES = {
     "R24": "Continental Cup Underdog Shield",
     "R25": "Home Momentum Over Market Value",
     "R26": "False Giant Slump Shield",
-    "R27": "Coupled Steam Confirmation",
-    "R28": "Current Odds Anchor (ราคาปัจจุบัน)",
+    "R27": "Extreme Market Value Override to Slump Shield (ปรับ Rule 26)",
+    "X1": "Coupled Steam Confirmation",
+    "X2": "Current Odds Anchor (ราคาปัจจุบัน)",
+    "R28": "Top-Table Away Shallow Handicap Draw Guard",
+    "R29": "Women & Regional League Market Flow Supremacy",
+    "R30": "Bottom-Table Home Desperation Guard",
+    "R31": "Heavy Handicap Deep Defense Filter",
+    "R32": "High Win-Rate Away Momentum Override",
+    "R33": "Bottom-Team Home Defensive Collapse Filter",
+    "R34": "Continental Heavyweight Home Rebound Guard",
+    "R35": "Continental Heavy Handicap Resilience Filter",
+    "R36": "Championship & High-Volatility Defensive Leakage Filter",
+    "R37": "Cup & Lower-Tier Upset Defense Protocol",
+    "R38": "Shallow Handicap Draw Vulnerability Filter",
+    "R39": "Home Defensive Meltdown & Collapse Shield (รวม Rule 41)",
+    "R40": "Elite Away Giant Slump & Pressured Trap Filter",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
-MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "R27"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
+MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "X1"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
 NOISE_RULES = {"R1", "R9"}               # กฎที่ถูกลดน้ำหนักเมื่อความขัดแย้ง <= 20% (Rule 11)
 
 ROLE_TH = {
@@ -269,6 +295,8 @@ def build_features(m, P):
 
     # --- V5.9: ตารางคะแนน / ฟอร์ม / บริบทเพิ่มเติม ---
     f["continental"] = bool(ctx.get("continental_cup"))
+    f["women_regional"] = bool(ctx.get("women_or_regional"))                                    # Rule 29
+    f["asian_cup"] = bool(ctx.get("asian_cup")) or "AFC" in str(m.get("league", "")).upper()   # Rule 35
     f["high_draw"] = bool(ctx.get("high_draw_league"))
     rk = m.get("rank") or {}
     f["rank_home"] = rk.get("home") if _num(rk.get("home")) else None
@@ -287,7 +315,8 @@ def build_features(m, P):
         return 100.0 * seq.count("W") / len(seq) if seq else None
     f["fav_win_rate"], f["dog_win_rate"] = _wr(fav), _wr(dog)
     f["false_giant"] = bool(f["value_ratio"] is not None and f["value_ratio"] > 1
-                            and f["fav_win_rate"] is not None and f["fav_win_rate"] <= 20)       # Rule 26
+                            and f["fav_win_rate"] is not None and f["fav_win_rate"] <= 20
+                            and f["value_ratio"] < P["false_giant_max_ratio"])                    # Rule 26 (ยกเว้น Rule 27: มูลค่า >= 3.5 เท่า)
     cp = st.get("away_counter_pct")
     f["shield24"] = bool(f["continental"] and cp is not None and cp > P["counter_pct"])           # Rule 24
     if f["false_giant"] or f["shield24"]:
@@ -390,7 +419,7 @@ def make_tags(f, P):
             t.append("h2h:dog_dom")
     if f["fav"] == "away":
         t.append("home_dog")
-    for flag, name in (("high_draw", "draw_league"), ("continental", "continental"), ("false_giant", "false_giant"),
+    for flag, name in (("high_draw", "draw_league"), ("continental", "continental"), ("women_regional", "women_regional"), ("asian_cup", "asian_cup"), ("false_giant", "false_giant"),
                        ("shield24", "shield24"), ("home_momentum", "home_momentum")):
         if f[flag]:
             t.append(name)
@@ -542,7 +571,7 @@ def rule9(f, P):
     return out
 
 
-def rule27(f, P):
+def rule_x1(f, P):
     """Coupled Steam Confirmation: เรต HDP + พูล 1X2 + โบรกเกอร์ส่วนใหญ่ ไหลไปทางเดียวกัน
     โดยราคา (ปรับตามเรตแล้ว) ไม่แย่ลง และไม่มีหลักฐานมหาชนแห่หนัก -> ถือเป็นการไหลจริง หนุนฝั่งนั้น"""
     s = f["hdp_shift_fav"]
@@ -558,7 +587,7 @@ def rule27(f, P):
     agf = 0.8 if ag is None else 0.6 + 0.4 * ag
     val = min(abs(s) / 0.25, 2.0) * agf
     ag_txt = "" if ag is None else f", โบรกเกอร์ขยับทางเดียวกัน {ag:.0%}"
-    return [("R27", mk, val, f"Coupled Steam: เรต HDP {s:+g} + พูล 1X2 {nm} +{pp:.1f}pp{ag_txt} ยืนยันกัน (ค่าน้ำปรับตามเรตแล้วไม่แย่ลง)")]
+    return [("X1", mk, val, f"Coupled Steam: เรต HDP {s:+g} + พูล 1X2 {nm} +{pp:.1f}pp{ag_txt} ยืนยันกัน (ค่าน้ำปรับตามเรตแล้วไม่แย่ลง)")]
 
 
 def rule11(f, P):
@@ -688,26 +717,268 @@ def rule26(f, P):
     return []
 
 
-def rule28(f, P):
+def rule_x2(f, P):
     """Current Odds Anchor: อ่านเจตนาโต๊ะจาก 'ราคาปัจจุบัน' ล้วน ๆ (ค่าน้ำถูกกดต่ำกว่าอีกฝั่ง)"""
     out, k = [], P["skew_min"]
     d = f["dog_water_c"] - f["fav_water_c"]            # + = ค่าน้ำทีมต่อต่ำกว่า
     if abs(d) >= k:
         mk, nm = (f["fav_hdp"], f["fav_name"]) if d > 0 else (f["dog_hdp"], f["dog_name"])
-        out.append(("R28", mk, min(abs(d) / k, 2.0) * 0.5, f"Current Odds: ค่าน้ำ HDP ปัจจุบันของ {nm} ต่ำกว่าอีกฝั่ง {abs(d):.2f} (โต๊ะกดราคาฝั่งนี้)"))
+        out.append(("X2", mk, min(abs(d) / k, 2.0) * 0.5, f"Current Odds: ค่าน้ำ HDP ปัจจุบันของ {nm} ต่ำกว่าอีกฝั่ง {abs(d):.2f} (โต๊ะกดราคาฝั่งนี้)"))
     if f["has_ou"]:
         d = f["over_water_c"] - f["under_water_c"]       # + = ค่าน้ำ Under ต่ำกว่า
         if abs(d) >= k:
             mk = "OU_UNDER" if d > 0 else "OU_OVER"
-            out.append(("R28", mk, min(abs(d) / k, 2.0) * 0.5, f"Current Odds: ค่าน้ำ OU ปัจจุบันฝั่ง {mk[3:]} ต่ำกว่าอีกฝั่ง {abs(d):.2f}"))
+            out.append(("X2", mk, min(abs(d) / k, 2.0) * 0.5, f"Current Odds: ค่าน้ำ OU ปัจจุบันฝั่ง {mk[3:]} ต่ำกว่าอีกฝั่ง {abs(d):.2f}"))
     return out
 
 
 RULES = [rule1, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9, rule11, rule12, rule14, rule16,
-         rule17, rule18, rule19, rule20, rule21, rule22, rule23, rule24, rule25, rule26, rule27, rule28]
+         rule17, rule18, rule19, rule20, rule21, rule22, rule23, rule24, rule25, rule26, rule_x1, rule_x2]
 ROLE_TO_MARKET = lambda role, f: {
     "HDP_FAV": f["fav_hdp"], "HDP_DOG": f["dog_hdp"], "OU_OVER": "OU_OVER",
     "OU_UNDER": "OU_UNDER", "X12_FAV": f["fav_x12"]}[role]
+
+
+# ----------------------------------------------------------------------------
+# กลุ่มข้อมูลของ Rule: ใช้ในโหมดคะแนน "นับกลุ่มละครั้ง" เพื่อไม่บวก Rule ที่อิงข้อมูลเดียวกัน/ชี้ทางเดียวกันซ้ำ
+# ----------------------------------------------------------------------------
+RULE_GROUPS = {
+    "R1": "flow", "R2": "flow", "R9": "flow", "R11": "flow", "X1": "flow",     # การไหลของราคา (เทียบราคาเปิด)
+    "X2": "price",                                                              # ค่าน้ำปัจจุบัน
+    "R3": "stats", "R5": "stats", "R8": "stats", "R22": "stats",               # สถิติประตู/H2H
+    "R4": "context", "R6": "context", "R7": "context", "R10": "context", "R12": "context", "R16": "context",
+    "R17": "context", "R20": "context", "R21": "context", "R24": "context",     # บริบทการแข่งขัน/แรงจูงใจ
+    "R18": "table", "R19": "table", "R23": "table",                            # ตารางคะแนน
+    "R14": "override", "R25": "override", "R26": "override",                   # กฎ override มูลค่าทีม/ฟอร์ม
+}
+GROUP_TH = {"flow": "การไหลของราคา", "price": "ราคาปัจจุบัน", "stats": "สถิติประตู/H2H", "context": "บริบท/แรงจูงใจ",
+            "table": "ตารางคะแนน", "override": "กฎ override", "learned": "Rule ที่เรียนรู้", "experimental": "Rule ทดลอง"}
+
+
+def rule_group(rid):
+    return RULE_GROUPS.get(rid) or ("learned" if str(rid).startswith("L") else "experimental")
+
+
+def _form_stats(f, side):
+    x = ((f.get("form") or {}).get(side)) or {}
+    seq = str(x.get("seq") or "").upper()
+    n = len(seq)
+    wr = x.get("win_rate")
+    if not isinstance(wr, (int, float)):
+        wr = 100.0 * seq.count("W") / n if n else None
+    return wr, (seq.count("D") / n if n else None)
+
+
+def _xv(f):
+    """ตัวแปรช่วยสำหรับ Rule ทดลอง (ทนต่อ features รุ่นเก่าที่ขาดบางคีย์)"""
+    fav = f["fav"]
+    hwr, hdr = _form_stats(f, "home")
+    awr, adr = _form_stats(f, "away")
+    vr = f.get("value_ratio")
+    return {"home_ga": f.get("home_ga"), "away_ga": f.get("fav_ga") if fav == "away" else f.get("dog_ga"),
+            "hwr": hwr, "awr": awr, "hdr": hdr, "adr": adr,
+            "hv": None if vr is None else (vr if fav == "home" else 1.0 / vr),
+            "rh": f.get("rank_home"), "ra": f.get("rank_away"), "size": f.get("league_size"),
+            "line": f["fav_line_c"], "fav_away": fav == "away"}
+
+
+def _bottom(f, side, P):
+    x = _xv(f)
+    r = x["rh"] if side == "home" else x["ra"]
+    return bool(x["size"] and r is not None and r > P["bottom_zone"] * x["size"])
+
+
+def _exp(rec, veto, note, flow_only=False):
+    return {"rec": rec, "veto": veto, "note": note, "flow_only": flow_only}
+
+
+def exp28(f, P, c):
+    x = _xv(f)
+    if x["fav_away"] and x["ra"] is not None and x["rh"] is not None and x["ra"] <= 3 and x["rh"] <= 6 and x["line"] <= 0.25:
+        return _exp([("HDP_HOME", 1.2), ("OU_UNDER", 1.0)], ["HDP_AWAY"], "R28: ทีมเยือนท็อป 3 ไปเยือนทีมหัวตาราง เรตบางเฉียบ -> เสี่ยงเสมอ เลี่ยงทีมต่อ")
+
+
+def exp29(f, P, c):
+    if f.get("women_regional") and f.get("rank_gap") is not None and abs(f["rank_gap"]) <= 4:
+        net = sum(x["eff"] * (1 if x["market"] == "HDP_HOME" else -1) for x in c if x.get("group") in ("flow", "price") and x["market"] in ("HDP_HOME", "HDP_AWAY"))
+        if abs(net) > 1e-9:
+            return _exp([("HDP_HOME" if net > 0 else "HDP_AWAY", abs(net))], [], "R29: ฟุตบอลหญิง/ลีกรองภูมิภาค อันดับใกล้กัน -> ยึดกระแสราคา 100%", flow_only=True)
+
+
+def exp30(f, P, c):
+    x = _xv(f)
+    if _bottom(f, "home", P) and x["ra"] is not None and abs(x["ra"] - x["rh"]) <= 6 and x["line"] <= 0.25:
+        return _exp([("HDP_HOME", 1.2)], ["HDP_AWAY"], "R30: เจ้าบ้านบ๊วยหนีตายเปิดบ้านเรตปริ่มน้ำ -> ห้ามเลือกทีมเยือน")
+
+
+def exp31(f, P, c):
+    x = _xv(f)
+    if x["line"] >= 1.5 and f.get("dog_ga") is not None and f["dog_ga"] <= 1.0:
+        return _exp([(f["dog_hdp"], 1.0), ("OU_UNDER", 1.0)], [f["fav_hdp"]], "R31: เรตต่อ >= 1.5 ทีมรองตั้งรับเหนียว (ประมาณจากประตูเสีย <= 1.0) -> เลี่ยงทีมต่อ")
+
+
+def exp32(f, P, c):
+    x = _xv(f)
+    if x["awr"] is not None and x["awr"] >= 80 and x["line"] <= 0.5:
+        return _exp([("HDP_AWAY", 1.5)], ["HDP_HOME"], "R32: ทีมเยือนชนะ >= 80% เรตตื้น -> ตามฟอร์มเยือน")
+
+
+def exp33(f, P, c):
+    x = _xv(f)
+    if _bottom(f, "home", P) and x["home_ga"] is not None and x["home_ga"] > 2.0 and x["ra"] is not None and x["size"] and x["ra"] <= 0.5 * x["size"]:
+        return _exp([("HDP_AWAY", 1.5)], ["HDP_HOME"], "R33: เจ้าบ้านบ๊วยเสียเฉลี่ย > 2 ในบ้าน พบทีมกลุ่มบน -> ห้ามเลือกเจ้าบ้าน")
+
+
+def exp34(f, P, c):
+    x = _xv(f)
+    if f.get("continental") and x["hv"] is not None and x["hv"] >= 1.5 and x["awr"] is not None and x["awr"] >= 60 and x["line"] <= 0.5:
+        return _exp([("HDP_HOME", 1.2)], ["HDP_AWAY"], "R34: บอลถ้วยทวีป เจ้าบ้านยักษ์ใหญ่ ทีมเยือนฟอร์มร้อน เรตตื้น -> ห้ามสวนเจ้าบ้าน")
+
+
+def exp35(f, P, c):
+    if f.get("asian_cup") and f["fav"] == "home" and f["fav_line_c"] >= 1.5 and f.get("rank_dog") is not None and f["rank_dog"] <= 5:
+        return _exp([(f["dog_hdp"], 1.0)], [], "R35: บอลถ้วยเอเชีย ต่อเรตสูงลิ่ว คู่แข่งกลุ่มหัวตาราง -> เลี่ยงทีมต่อ")
+
+
+def exp36(f, P, c):
+    x = _xv(f)
+    if f.get("high_vol") and x["home_ga"] is not None and x["away_ga"] is not None and x["home_ga"] > 1.5 and x["away_ga"] > 1.5:
+        return _exp([("OU_OVER", 1.5)], [f["fav_hdp"]] if x["line"] >= 1.0 else [], "R36: ลีกผันผวนสูง เกมรับรั่วทั้งคู่ -> เลี่ยงเรตต่อแพง มองสูง")
+
+
+def exp37(f, P, c):
+    x = _xv(f)
+    if (f.get("ctx_type") == "cup" or f.get("cup_group")) and x["fav_away"] and x["line"] <= 0.5 and x["home_ga"] is not None and x["home_ga"] <= 1.2:
+        return _exp([("HDP_HOME", 1.0)], ["HDP_AWAY"], "R37: บอลถ้วย เจ้าบ้านเหนียว เรตต่อตื้น -> ตัดสิทธิ์ทีมเยือนเป็นต่อ")
+
+
+def exp38(f, P, c):
+    x = _xv(f)
+    if x["line"] <= 0.25 and x["hdr"] is not None and x["adr"] is not None and x["hdr"] >= 0.4 and x["adr"] >= 0.4:
+        return _exp([("OU_UNDER", 1.5)], [f["fav_hdp"], f["fav_x12"]], "R38: เรตปริ่มน้ำ ทั้งสองทีมเสมอ >= 40% ใน 5 นัด -> เลี่ยงผลชนะ/แพ้ มองต่ำ")
+
+
+def exp39(f, P, c):
+    x = _xv(f)
+    if f["fav"] == "home" and x["home_ga"] is not None and x["home_ga"] > 1.5:
+        return _exp([("HDP_AWAY", 1.0)], ["HDP_HOME"], "R39/R41: เจ้าบ้านเป็นต่อแต่เสียเฉลี่ย > 1.5 ในบ้าน -> ตัดสิทธิ์ถือหางเจ้าบ้าน")
+
+
+def exp40(f, P, c):
+    x = _xv(f)
+    vr = f.get("value_ratio")
+    if x["fav_away"] and vr is not None and vr >= 2 and f.get("fav_win_rate") is not None and f["fav_win_rate"] <= 40:
+        return _exp([("HDP_HOME", 1.0)], ["HDP_AWAY"], "R40: ยักษ์เยือนฟอร์มสะดุด -> ห้ามถือหางทีมเยือน")
+
+
+# Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
+EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
+                "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40}
+
+
+def _wilson_lo(w, n, z):
+    return wilson(w / n, n, z)[0] if n else 0.0
+
+
+def _wilson_hi(w, n, z):
+    return wilson(w / n, n, z)[1] if n else 1.0
+
+
+def _declining(results, W, be):
+    """อัตราชนะลดลงต่อเนื่อง 3 ช่วงล่าสุด (ช่วงละ W ครั้ง ไม่นับเจ๊า) และช่วงล่าสุดต่ำกว่าจุดคุ้มทุน"""
+    dec = [x for x in results if x != 0]
+    if len(dec) < 3 * W:
+        return False
+    wins = [sum(1 for x in dec[-3 * W + i * W: len(dec) - (2 - i) * W] if x > 0) / W for i in range(3)]
+    return wins[0] > wins[1] > wins[2] and wins[2] < be
+
+
+def lifecycle_update(store, f, outcomes):
+    """ติดตามผลนอกกลุ่มตัวอย่างของ Rule ผู้สมัครทุกข้อที่เงื่อนไขตรงกับนัดนี้ (ทั้งเงาและที่ใช้งานอยู่)
+    แล้วตัดสินสถานะ: เงา -> ปลดล็อค (ผ่านเกณฑ์) / ถอด (ไม่มีประโยชน์ สวนทาง หรือแย่ลงต่อเนื่อง)
+    เรียกก่อน discover_rules ของนัดเดียวกัน เพื่อให้ผลที่นับเป็นผลที่ Rule ยังไม่เคยเห็น คืนรายการที่เปลี่ยนสถานะ"""
+    if getattr(store, "legacy_learned", False) and not getattr(store, "include_manual", True):
+        return []
+    P, S = store.params, store.state
+    life = S.setdefault("lifecycle", {})
+    seq = S.setdefault("meta", {}).get("settled", 0) + 1
+    base = _build_contribs(_base_raw(f, P), f, P, S)
+    changes = []
+    be = P["breakeven_wr"]
+    for rid, c in candidates_for(f, P, store, base).items():
+        if c["market"] not in outcomes:
+            continue
+        e = life.setdefault(rid, {"kind": c["kind"], "status": "shadow", "n": 0, "w": 0, "l": 0, "res": [],
+                                  "since": seq, "reason": "เริ่มติดตามผลเบื้องหลัง"})
+        if e["status"] == "retired":
+            continue
+        r = outcomes[c["market"]][0]
+        e["n"] += 1
+        e["w"] += r > 0
+        e["l"] += r < 0
+        e["res"] = (e["res"] + [round(r, 2)])[-120:]
+        dec = e["w"] + e["l"]
+        wr = e["w"] / dec if dec else 0.0
+        old = e["status"]
+        new, why = old, None
+        if dec >= P["retire_min_n"] and _wilson_hi(e["w"], dec, P["lb_z_judge"]) < be:
+            new, why = "retired", f"สวนทาง: อัตราชนะ {wr:.0%} ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ ({e['w']}/{dec})"
+        elif old == "active" and _declining(e["res"], P["decline_window"], be):
+            new, why = "retired", f"อัตราชนะลดลงต่อเนื่อง 3 ช่วงล่าสุดจนต่ำกว่าจุดคุ้มทุน (รวม {wr:.0%})"
+        elif old == "shadow":
+            if dec >= P["unlock_min_n"] and wr >= P["unlock_wr"] and _wilson_lo(e["w"], dec, P["lb_z_fast"]) > be:
+                new, why = "active", f"ผ่านเกณฑ์ทางลัด: ชนะ {wr:.0%} จาก {dec} ครั้ง (≥ {P['unlock_wr']:.0%}) นอกกลุ่มตัวอย่าง"
+            elif e["n"] >= P["judge_n"]:
+                if _wilson_lo(e["w"], dec, P["lb_z_judge"]) > be:
+                    new, why = "active", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} สูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ"
+                else:
+                    new, why = "retired", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} ไม่ดีกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ไม่มีประโยชน์"
+        if new != old:
+            e["status"], e["reason"], e["since"] = new, why, seq
+            changes.append((rid, old, new, why))
+    return changes
+
+
+def market_role(mk, f):
+    if mk == f.get("fav_hdp"):
+        return "HDP_FAV"
+    if mk == f.get("dog_hdp"):
+        return "HDP_DOG"
+    if mk in ("OU_OVER", "OU_UNDER"):
+        return mk
+    if mk == f.get("fav_x12"):
+        return "X12_FAV"
+    return None
+
+
+def rule_status(store, rid, kind):
+    """สถานะของ Rule ผู้สมัคร: shadow (เงา/ระงับ) | active (ใช้งาน) | retired (ถอด)"""
+    if kind == "learned" and getattr(store, "legacy_learned", False):
+        return "active"                                  # นโยบายเดิม (ใช้ทุก Rule ทันที) สำหรับเทียบใน backtest
+    e = (store.state.get("lifecycle") or {}).get(rid)
+    return e["status"] if e else "shadow"
+
+
+def candidates_for(f, P, store, contribs=None):
+    """Rule ผู้สมัคร (ที่ระบบสร้างเอง + Rule ทดลอง) ที่เงื่อนไขตรงกับแมตช์นี้ -> {id: {kind, market, role, rec, veto, note, flow_only}}"""
+    out = {}
+    for lr in store.state.get("learned_rules", []):
+        if lr.get("enabled", True) and set(lr["tags"]) <= set(f.get("tags", [])):
+            mk = ROLE_TO_MARKET(lr["role"], f)
+            out[lr["id"]] = {"kind": "learned", "market": mk, "role": lr["role"], "rec": [(mk, lr["strength"])], "veto": [],
+                             "flow_only": False,
+                             "note": f"Learned {lr['id']}: [{' + '.join(lr['tags'])}] -> {ROLE_TH[lr['role']]} (ชนะ {lr['wr']:.0%} จาก {lr['n']:.0f} นัด)"}
+    if getattr(store, "include_manual", True):
+        for rid, fn in EXPERIMENTAL.items():
+            try:
+                r = fn(f, P, contribs or [])
+            except Exception:  # noqa  (features รุ่นเก่าไม่ครบ)
+                r = None
+            if r and r.get("rec"):
+                mk = r["rec"][0][0]
+                out[rid] = {"kind": "manual", "market": mk, "role": market_role(mk, f), "rec": r["rec"], "veto": r.get("veto", []),
+                            "flow_only": r.get("flow_only", False), "note": r["note"]}
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -916,29 +1187,35 @@ class Store:
                         json.dump(obj, fh, ensure_ascii=False, indent=1)
         self.state = self._load(self.state_p, {
             "weights": dict(DEFAULT_WEIGHTS), "rule_stats": {}, "learned_rules": [],
-            "params": {}, "meta": {"next_learned": 1, "schema": "5.9"}})
+            "params": {}, "meta": {"next_learned": 1, "schema": "6.0"}, "lifecycle": {}})
         self._migrate()
         for k, v in DEFAULT_WEIGHTS.items():
             self.state["weights"].setdefault(k, v)
         self.history = self._load(self.hist_p, [])
-        if getattr(self, "_pending_migration", False):
+        ren = getattr(self, "_pending_migration", None)
+        if ren:
             for r in self.history:
                 for c in r.get("contribs", []):
-                    if c.get("rule") == "R17":
-                        c["rule"] = "R27"
+                    if c.get("rule") in ren:
+                        c["rule"] = ren[c["rule"]]
 
     def _migrate(self):
-        """V5.9 -> V5.9: R17 เดิม (Coupled Steam) ถูกเปลี่ยนเป็น R27 เพราะ R17-20 ในระบบ V5.9 เป็นกฎอื่น"""
+        """V5.8 -> V5.9: R17 เดิม (Coupled Steam) -> R27
+        V5.9 -> V6.0: R27 (Coupled Steam) -> X1, R28 (Current Odds Anchor) -> X2 เพราะ R27-R41 เป็นกฎชุดใหม่
+        และ Rule ที่ระบบสร้างเองทั้งหมดเริ่มสถานะ "เงา" (ระงับ) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง"""
         meta = self.state.setdefault("meta", {"next_learned": 1})
-        if meta.get("schema") == "5.9":
-            return
         w, rs = self.state.setdefault("weights", {}), self.state.setdefault("rule_stats", {})
-        if "R17" in w and "R27" not in w:
-            w["R27"] = w.pop("R17")
-        if "R17" in rs and "R27" not in rs:
-            rs["R27"] = rs.pop("R17")
-        meta["schema"] = "5.9"
-        self._pending_migration = True
+        sch = meta.get("schema")
+        if sch == "6.0":
+            return
+        ren = {"R27": "X1", "R28": "X2"} if sch == "5.9" else {"R17": "X1"}
+        for d in (w, rs):
+            for old in list(ren):
+                if old in d and ren[old] not in d:
+                    d[ren[old]] = d.pop(old)
+        self.state.setdefault("lifecycle", {})
+        meta["schema"] = "6.0"
+        self._pending_migration = ren
 
     @staticmethod
     def _load(p, default):
@@ -987,23 +1264,8 @@ def analyze_match(m, store):
     return analyze_features(m, build_features(m, store.params), store)
 
 
-def analyze_features(m, f, store):
-    """ให้คะแนน Rule และฟันธงจาก features (m ไม่จำเป็น) ใช้ซ้ำใน backtest กับ features ที่เก็บไว้"""
-    P, S = store.params, store.state
-    raw = []                                         # (rule, market, value, note)
-    for fn in RULES:
-        raw += fn(f, P)
-    for lr in S["learned_rules"]:                    # Rule ที่ระบบสร้างเอง
-        if lr.get("enabled", True) and set(lr["tags"]) <= set(f["tags"]):
-            mk = ROLE_TO_MARKET(lr["role"], f)
-            raw.append((lr["id"], mk, lr["strength"],
-                        f"Learned {lr['id']}: [{' + '.join(lr['tags'])}] -> {ROLE_TH[lr['role']]} (ชนะ {lr['wr']:.0%} จาก {lr['n']:.0f} นัด)"))
-    if f["derby"]:                                   # Rule 10: อารมณ์ร่วมในสนาม
-        raw.append(("R10", f["dog_hdp"], 0.3, "ดาร์บี้: ให้น้ำหนักอารมณ์สนามมากกว่าสถิติ (+ทีมรอง)"))
-    raw = [r for r in raw if r[1] != "OU_OVER" and r[1] != "OU_UNDER" or f["has_ou"]]
-
-    scores = {k: 0.0 for k in ALL_MARKETS}
-    contribs = []
+def _build_contribs(raw, f, P, S):
+    out = []
     for rid, mk, val, note in raw:
         w = S["weights"].get(rid, 1.0)
         mod = 1.0
@@ -1012,11 +1274,61 @@ def analyze_features(m, f, store):
         if rid in NOISE_RULES and f["conflict"] <= P["decouple_threshold"]:
             mod *= P["noise_factor"]                 # Rule 11: ตัดกระแส Public noise
         eff = val * w * mod
-        scores[mk] += eff
-        contribs.append({"rule": rid, "market": mk, "raw": round(val, 4), "eff": round(eff, 4), "note": note})
+        out.append({"rule": rid, "market": mk, "raw": round(val, 4), "eff": eff, "note": note, "group": rule_group(rid)})
+    return out
 
-    # --- Veto (Rule 14 / 16 / 25 / 26) ---
-    veto = set(f.get("veto", []))
+
+def _base_raw(f, P):
+    """คะแนนดิบจาก Rule หลัก 1-26 (+X1/X2) ก่อนรวม Rule ผู้สมัคร"""
+    raw = []                                         # (rule, market, value, note)
+    for fn in RULES:
+        raw += fn(f, P)
+    if f["derby"]:                                   # Rule 10: อารมณ์ร่วมในสนาม
+        raw.append(("R10", f["dog_hdp"], 0.3, "ดาร์บี้: ให้น้ำหนักอารมณ์สนามมากกว่าสถิติ (+ทีมรอง)"))
+    return [r for r in raw if r[1] not in ("OU_OVER", "OU_UNDER") or f["has_ou"]]
+
+
+def analyze_features(m, f, store):
+    """ให้คะแนน Rule และฟันธงจาก features (m ไม่จำเป็น) ใช้ซ้ำใน backtest กับ features ที่เก็บไว้
+    Rule ที่ระบบสร้างเอง/Rule ทดลอง จะมีผลต่อการฟันธงก็ต่อเมื่อสถานะเป็น active เท่านั้น (shadow = ประเมินเบื้องหลัง)"""
+    P, S = store.params, store.state
+    flt = lambda L: [r for r in L if r[1] not in ("OU_OVER", "OU_UNDER") or f["has_ou"]]
+    raw = _base_raw(f, P)
+    base_contribs = _build_contribs(raw, f, P, S)
+
+    extra, shadow, extra_veto, flow_only = [], [], set(), False
+    for rid, c in candidates_for(f, P, store, base_contribs).items():
+        st_ = rule_status(store, rid, c["kind"])
+        if st_ == "active":
+            extra += [(rid, mk_, val_, c["note"]) for mk_, val_ in c["rec"]]
+            extra_veto |= set(c["veto"])
+            flow_only = flow_only or c.get("flow_only", False)
+        elif st_ == "shadow":
+            shadow.append({"id": rid, "kind": c["kind"], "market": c["market"], "role": c["role"], "note": c["note"]})
+    contribs = _build_contribs(flt(raw + extra), f, P, S)
+
+    # ---- รวมคะแนนต่อทางเลือก
+    scores = {k: 0.0 for k in ALL_MARKETS}
+    use = [c for c in contribs if (not flow_only) or c["group"] in ("flow", "price")]
+    for c in contribs:
+        c["counted"] = False
+    mode = P.get("score_mode", "sum")
+    if mode == "grouped":                            # นับกลุ่มข้อมูลละครั้ง: เอาค่าสูงสุดของแต่ละกลุ่มต่อทางเลือก
+        best = {}
+        for c in use:
+            key = (c["market"], c["group"])
+            if key not in best or c["eff"] > best[key]["eff"]:
+                best[key] = c
+        for (mk_, _g), c in best.items():
+            scores[mk_] += c["eff"]
+            c["counted"] = True
+    else:
+        for c in use:
+            scores[c["market"]] += c["eff"]
+            c["counted"] = True
+
+    # --- Veto (Rule 14 / 16 / 25 / 26 และ Rule ทดลองที่ปลดล็อคแล้ว) ---
+    veto = set(f.get("veto", [])) | extra_veto
     if f["derby"] and f["has_ou"] and f["ou_c"] <= 2.5 and f["late_goal"]:
         veto.add("OU_UNDER")
 
@@ -1062,11 +1374,14 @@ def analyze_features(m, f, store):
     if f.get("verify_fail"):
         tier = "ต่ำ"                                 # Home/Away Verification ไม่ผ่าน -> ไม่ให้ระดับสูง/กลาง
 
+    for c in contribs:
+        c["eff"] = round(c["eff"], 4)                # ปัดเศษเพื่อเก็บ (หลังรวมคะแนนด้วยค่าเต็มแล้ว)
     price, label = pick_label(m, f, mk)
     pick = {"market": mk, "strength": round(strength, 3), "confidence": round(conf, 1), "tier": tier,
             "label": label, "price_win": price, "veto": sorted(veto),
             "move_only": mk in moved, "verify_fail": bool(f.get("verify_fail")),
-            "runner_up": [(c[0], round(c[1], 3)) for c in cands[1:3]]}
+            "runner_up": [(c[0], round(c[1], 3)) for c in cands[1:3]],
+            "shadow": shadow, "score_mode": mode}
     return f, contribs, pick
 
 
@@ -1154,7 +1469,7 @@ def render_report(m, f, contribs, pick, store):
         L.append("    (ไม่มี Rule ใดทำงาน)")
 
     L.append("\n🔍 ถอดรหัสเจตนาโต๊ะ (จากราคาปัจจุบัน)")
-    keyr = [c for c in contribs if c["rule"] in ("R1", "R2", "R5", "R9", "R11", "R27", "R28") or c["rule"].startswith("L")]
+    keyr = [c for c in contribs if c["rule"] in ("R1", "R2", "R5", "R9", "R11", "X1", "X2") or c["rule"].startswith("L")]
     if keyr:
         for c in keyr:
             L.append(f"  - {c['note']}")
@@ -1264,6 +1579,8 @@ def accumulate_stats(stats, tags, roles, P):
                 s_ = stats.setdefault((combo, role), [0, 0.0])
                 s_[0] += 1
                 s_[1] += (1 + r) / 2
+    a_ = stats.setdefault(("__all__", ""), [0, 0.0])
+    a_[0] += 1
 
 
 def discover_rules(store, verbose=True):
@@ -1278,6 +1595,14 @@ def discover_rules(store, verbose=True):
             accumulate_stats(stats, rec["features"]["tags"], rec["role_r"], P)
 
     learned = S["learned_rules"]
+    total = (stats.get(("__all__", "")) or [0])[0]
+    universal = set()
+    if P.get("exclude_universal") and total >= 20:    # เงื่อนไขที่จริงเกือบทุกนัด = เดิมพันตามสัดส่วนเดิม ไม่ใช่รูปแบบ
+        for (combo, role), v in stats.items():
+            if role == "HDP_FAV" and isinstance(combo, tuple) and len(combo) == 1 and v[0] / total >= P["universal_cov"]:
+                universal.add(combo[0])
+    life = S.get("lifecycle") or {}
+    live_count = sum(1 for r in learned if (life.get(r["id"]) or {}).get("status") != "retired")
     for lr in learned:                               # รีเฟรชสถิติ Rule เดิม
         s = stats.get((tuple(lr["tags"]), lr["role"]))
         if s and s[0] >= P["disc_min_n"]:
@@ -1288,7 +1613,7 @@ def discover_rules(store, verbose=True):
 
     cands = []
     for (combo, role), (n, w) in stats.items():
-        if n < P["disc_min_n"] or (combo, role) in existing:
+        if combo == "__all__" or n < P["disc_min_n"] or (combo, role) in existing or universal & set(combo):
             continue
         p = w / n
         lo, _ = wilson(p, n, P["disc_z"])
@@ -1301,7 +1626,7 @@ def discover_rules(store, verbose=True):
 
     new, seen_sig = [], set()
     for lo, _, combo, role, n, p, w in cands:
-        if len(new) >= P["disc_max_new"] or len(learned) + len(new) >= P["disc_max_total"]:
+        if len(new) >= P["disc_max_new"] or live_count + len(new) >= P["disc_max_total"]:
             break
         sig = (role, n, round(w, 2))                 # ชุดแมตช์เดียวกัน -> เก็บอันที่เงื่อนไขน้อยสุด
         if sig in seen_sig:
@@ -1865,6 +2190,7 @@ def do_settle(store, rec, hg, ag):
     rec.update(status="settled", score=[hg, ag], pick_r=r, pick_profit=round(pf, 4),
                role_r=role_outcomes(rec, outcomes))
     changes = update_weights(store, rec, outcomes)
+    rec["life_changes"] = lifecycle_update(store, rec["features"], outcomes)
     new = discover_rules(store, verbose=False)
     store.state["meta"]["settled"] = store.state["meta"].get("settled", 0) + 1
     rec["settle_seq"] = store.state["meta"]["settled"]
@@ -1910,6 +2236,7 @@ def rebuild_learning(store):
     S["weights"] = dict(DEFAULT_WEIGHTS)
     S["rule_stats"] = {}
     S["learned_rules"] = []
+    S["lifecycle"] = {}
     meta = S.setdefault("meta", {})
     meta["next_learned"], meta["settled"] = 1, 0
     order = sorted(((r.get("settle_seq", -1), i, r) for i, r in enumerate(store.history) if r.get("status") == "settled"),
@@ -1926,6 +2253,7 @@ def rebuild_learning(store):
             r_, halves = outcomes[pk["market"]]
             rec.update(pick_r=r_, pick_profit=round(profit(halves, pk["price_win"]), 4), role_r=role_outcomes(rec, outcomes))
             update_weights(store, rec, outcomes)
+            rec["life_changes"] = lifecycle_update(store, rec["features"], outcomes)
             discover_rules(store, verbose=False)
             meta["settled"] += 1
             rec["settle_seq"] = meta["settled"]
