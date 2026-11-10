@@ -352,6 +352,7 @@ def build_features(m, P):
     f["away_form_away"] = m.get("away_form_away")
     f["venue_stats"] = bool(st.get("venue"))
     f["n_books"] = m.get("n_books")
+    f["best_price"] = m.get("best_price") or {}
     f["verify"] = verify_home_away(m, f)
     f["verify_fail"] = any(not ok for ok, _ in f["verify"])
     f["tags"] = make_tags(f, P)
@@ -1110,13 +1111,14 @@ def _cell(v):
 
 def sheet_views(state, history):
     """ตารางอ่านง่ายสำหรับแสดงใน Google Sheets"""
-    hist = [["id", "บันทึกเมื่อ", "เหย้า", "เยือน", "ลีก", "สัญญาณฟันธง", "ระดับ", "ความมั่นใจ %", "สถานะ", "สกอร์", "ผล", "กำไร/ขาดทุน (หน่วย)"]]
+    hist = [["id", "บันทึกเมื่อ", "เหย้า", "เยือน", "ลีก", "สัญญาณฟันธง", "ระดับสัญญาณ", "ราคาดีที่สุด", "สถานะ", "สกอร์", "ผล", "กำไร/ขาดทุน (หน่วย)"]]
     for r in reversed(history):
         fe, pk = r.get("features") or {}, r.get("pick") or {}
         done = r.get("status") == "settled"
         hist.append([_cell(x) for x in (
             r.get("id", ""), r.get("created", ""), fe.get("home", ""), fe.get("away", ""), fe.get("league", ""),
-            pk.get("label", ""), pk.get("tier", ""), pk.get("confidence", ""),
+            pk.get("label", ""), pk.get("tier", ""),
+            (f'{pk["best"]["book"]} @{pk["best"]["price"]:.2f}' if pk.get("best") else ""),
             "บันทึกผลแล้ว" if done else "รอผล", "-".join(map(str, r.get("score") or [])),
             result_word(r["pick_r"]) if done and "pick_r" in r else "", r.get("pick_profit", "") if done else "")])
     wt = [["Rule", "ชื่อ", "น้ำหนัก", "ใช้ (ครั้ง)"]]
@@ -1412,12 +1414,18 @@ def analyze_features(m, f, store):
     for c in contribs:
         c["eff"] = round(c["eff"], 4)                # ปัดเศษเพื่อเก็บ (หลังรวมคะแนนด้วยค่าเต็มแล้ว)
     price, label = pick_label(m, f, mk)
+    bp = (f.get("best_price") or {}).get(mk)
+    best = None
+    if bp and bp["price"] > price + 1e-9:
+        best = {"book": bp["book"], "price": round(bp["price"], 3), "gain": round(bp["price"] - price, 3),
+                "breakeven": round(1 / (1 + bp["price"]), 4), "breakeven_median": round(1 / (1 + price), 4)}
     pick = {"market": mk, "strength": round(strength, 3), "confidence": round(conf, 1), "tier": tier,
             "label": label, "price_win": price, "veto": sorted(veto),
             "move_only": mk in moved, "verify_fail": bool(f.get("verify_fail")),
             "runner_up": [(c[0], round(c[1], 3)) for c in cands[1:3]],
             "shadow": shadow, "score_mode": mode,
-            "skip": bool(skip), "skip_reasons": skip, "support": round(support, 3), "oppose": round(oppose, 3)}
+            "skip": bool(skip), "skip_reasons": skip, "support": round(support, 3), "oppose": round(oppose, 3),
+            "signal_level": tier, "best": best}
     return f, contribs, pick
 
 
@@ -1518,7 +1526,10 @@ def render_report(m, f, contribs, pick, store):
         for x in pick.get("skip_reasons", []):
             L.append(f"     · {x}")
     L.append(f"  >>> {pick['label']} <<<   (ราคาปัจจุบัน)")
-    L.append(f"  ความมั่นใจ: {pick['confidence']:.0f}%  (ระดับ{pick['tier']}, คะแนน {pick['strength']:.2f})")
+    L.append(f"  ระดับสัญญาณ: {pick['tier']}  (คะแนน {pick['strength']:.2f} · ไม่ใช่โอกาสชนะ)")
+    if pick.get("best"):
+        b_ = pick["best"]
+        L.append(f"  ราคาดีที่สุด: {b_['book']} @{b_['price']:.2f} (ดีกว่าราคามัธยฐาน +{b_['gain']:.2f} · จุดคุ้มทุน {b_['breakeven']:.1%})")
     if pick["veto"]:
         L.append(f"  ตัวเลือกที่ถูกแบน (Veto): {', '.join(pick['veto'])}")
     if pick.get("move_only"):
@@ -1925,6 +1936,27 @@ def consolidate_books(m):
         if d1:
             chg[key] = {f1: _med(d1), f2: _med(d2), "n": len(d1)}
     m["water_chg"] = chg
+    # ราคาดีที่สุดของแต่ละทางเลือก (ราคาปัจจุบัน เฉพาะเจ้าที่อยู่เรตเดียวกับเรตรวม) สำหรับ line shopping
+    best = {}
+    cur_h, cur_o = (m.get("hdp") or {}).get("current"), (m.get("ou") or {}).get("current")
+    for b in books:
+        nm = b.get("name", "?")
+        h = (b.get("hdp") or {}).get("current") or {}
+        if cur_h and all(_num(h.get(k)) for k in ("line", "home_water", "away_water")) and abs(h["line"] - cur_h["line"]) < 1e-9:
+            for mk_, k in (("HDP_HOME", "home_water"), ("HDP_AWAY", "away_water")):
+                if mk_ not in best or h[k] > best[mk_]["price"]:
+                    best[mk_] = {"book": nm, "price": h[k]}
+        o = (b.get("ou") or {}).get("current") or {}
+        if cur_o and all(_num(o.get(k)) for k in ("line", "over", "under")) and abs(o["line"] - cur_o["line"]) < 1e-9:
+            for mk_, k in (("OU_OVER", "over"), ("OU_UNDER", "under")):
+                if mk_ not in best or o[k] > best[mk_]["price"]:
+                    best[mk_] = {"book": nm, "price": o[k]}
+        x = (b.get("x12") or {}).get("current")
+        if isinstance(x, list) and len(x) == 3 and all(_num(v) for v in x):
+            for mk_, i in (("X12_HOME", 0), ("X12_AWAY", 2)):
+                if mk_ not in best or x[i] - 1 > best[mk_]["price"]:
+                    best[mk_] = {"book": nm, "price": round(x[i] - 1, 3)}
+    m["best_price"] = best
     # สัดส่วนโบรกเกอร์ที่ขยับเรต HDP ไปทางเดียวกับเรตรวม (ใช้ใน Rule 17)
     m["hdp_agree"] = None
     h = m.get("hdp")
@@ -2333,6 +2365,8 @@ def do_settle(store, rec, hg, ag):
     pk = rec["pick"]
     r, halves = outcomes[pk["market"]]
     pf = profit(halves, pk["price_win"])
+    bst = pk.get("best")
+    rec["pick_profit_best"] = round(profit(halves, bst["price"]), 4) if bst else round(pf, 4)
     rec.update(status="settled", score=[hg, ag], pick_r=r, pick_profit=round(pf, 4),
                role_r=role_outcomes(rec, outcomes))
     changes = update_weights(store, rec, outcomes)
@@ -2402,6 +2436,8 @@ def rebuild_learning(store):
             pk = rec["pick"]
             r_, halves = outcomes[pk["market"]]
             rec.update(pick_r=r_, pick_profit=round(profit(halves, pk["price_win"]), 4), role_r=role_outcomes(rec, outcomes))
+            if pk.get("best"):
+                rec["pick_profit_best"] = round(profit(halves, pk["best"]["price"]), 4)
             update_weights(store, rec, outcomes)
             rec["life_changes"] = lifecycle_update(store, rec["features"], outcomes)
             discover_rules(store, verbose=False)
