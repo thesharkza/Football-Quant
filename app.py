@@ -195,7 +195,8 @@ def arrow(v, eps=1e-9):
 
 CTX_LABELS = [("derby", "ดาร์บี้"), ("high_scoring_league", "ลีกประตูเยอะ"), ("high_draw_league", "ลีกเสมอสูง"),
               ("high_volatility", "ลีกผันผวนสูง"), ("cup_group_stage", "ถ้วยรอบแบ่งกลุ่ม"), ("knockout", "น็อคเอาต์"),
-              ("continental_cup", "ถ้วยทวีป"), ("late_goal_tendency", "ยิงท้ายเกมสูง")]
+              ("continental_cup", "ถ้วยทวีป"), ("late_goal_tendency", "ยิงท้ายเกมสูง"),
+              ("women_or_regional", "ฟุตบอลหญิง/ลีกรอง"), ("asian_cup", "ถ้วยเอเชีย")]
 TYPE_TH = {"league": "ลีก", "cup": "ถ้วย", "playoff": "เพลย์ออฟ"}
 
 
@@ -284,7 +285,8 @@ def make_result(m, opts, ext_warn=(), research_err=None, save=True):
     saved = None
     if save:
         saved = q.record_prediction(store, m, f, contribs, pick, warns)
-    return {"m": m, "f": f, "contribs": contribs, "pick": pick, "warns": list(ext_warn) + warns,
+    crit = ["ร้ายแรง: " + x for x in (m.get("critical") or [])]
+    return {"m": m, "f": f, "contribs": contribs, "pick": pick, "warns": crit + list(ext_warn) + warns,
             "research_err": research_err, "saved": saved, "report": q.render_report(m, f, contribs, pick, store)}
 
 
@@ -312,6 +314,15 @@ def run_pipeline(files, opts, do_research, save, box):
                     q.apply_research(m, r, srcs, qs)
                 except SystemExit as e:
                     research_err = str(e.code)
+            st.write("🧪 กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
+            chk = json.loads(json.dumps(m))
+            chk.pop("warnings", None)
+            q.validate_match(chk)
+            ss["match_json"] = json.dumps(m, ensure_ascii=False, indent=2, default=str)
+            if chk.get("critical"):
+                status.update(label="พบข้อมูลที่อาจอ่านผิด — กรุณาตรวจก่อนวิเคราะห์", state="error", expanded=False)
+                return {"_gate": True, "m": m, "ext_warn": ext_warn, "research_err": research_err,
+                        "critical": chk["critical"], "save": save}
             st.write("📊 กำลังวิเคราะห์ราคาและฟันธง ...")
             res = make_result(m, opts, ext_warn, research_err, save)
             ss["match_json"] = json.dumps({k: v for k, v in res["m"].items() if k != "warnings"},
@@ -409,10 +420,35 @@ with tab1:
                 st.error("ยังไม่ได้ตั้งค่า GEMINI_API_KEY (ใส่ที่ Secrets หรือช่องใน “ตั้งค่าขั้นสูง”)")
         else:
             res = run_pipeline(files, opts, do_research, do_save, box)
-            if res:
+            if res and res.get("_gate"):
+                ss["gate"] = res
+                ss.pop("res", None)
+                ss["up_ver"] += 1
+                st.rerun()
+            elif res:
+                ss.pop("gate", None)
                 ss["res"] = res
                 ss["up_ver"] += 1             # วิเคราะห์สำเร็จ -> เคลียร์รูปทันที (ถ้าล้มเหลวจะคงรูปไว้ให้ลองใหม่)
                 ss["cleared_msg"] = True
+                st.rerun()
+    if ss.get("gate"):
+        g = ss["gate"]
+        with box:
+            items = "".join(f"<li>{esc(x)}</li>" for x in g["critical"])
+            st.markdown(f'<div class="res lose">พบข้อมูลที่อาจอ่านผิดจากรูป ({len(g["critical"])} จุด) ระบบหยุดไว้ก่อนวิเคราะห์'
+                        f'<ul style="margin:8px 0 0;padding-left:18px;font-weight:400">{items}</ul></div>', unsafe_allow_html=True)
+            st.caption("ตรวจตัวเลขในรูปเทียบกับข้อมูลที่อ่านได้ (เปิด “⚙ ตั้งค่าขั้นสูง” ด้านล่างเพื่อแก้ แล้วกด “วิเคราะห์ใหม่จากข้อมูลที่แก้ไข”) "
+                       "หรือถ้าตรวจแล้วข้อมูลถูกต้อง กดวิเคราะห์ต่อได้")
+            g1, g2 = st.columns(2)
+            if g1.button("▶ ข้อมูลถูกต้อง วิเคราะห์ต่อ", type="primary", key="gate_go"):
+                try:
+                    ss["res"] = make_result(json.loads(json.dumps(g["m"])), get_opts(), g["ext_warn"], g["research_err"], g["save"])
+                    ss.pop("gate", None)
+                    st.rerun()
+                except ValueError as e:
+                    st.error(f"ข้อมูลไม่ครบ/ไม่ถูกต้อง: {e}")
+            if g2.button("✖ ยกเลิก", key="gate_cancel"):
+                ss.pop("gate", None)
                 st.rerun()
     if ss.get("res"):
         with box:
@@ -443,6 +479,7 @@ with tab1:
             try:
                 m2 = json.loads(ss["match_json"])
                 ss["res"] = make_result(m2, get_opts(), save=bool(ss.get("opt_save", True)))
+                ss.pop("gate", None)
                 st.rerun()
             except json.JSONDecodeError as e:
                 st.error(f"รูปแบบข้อมูลไม่ถูกต้อง: {e}")
@@ -469,8 +506,9 @@ with tab2:
             if st.button("✅ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
                 outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
                 cls = "win" if r > 0 else "lose" if r < 0 else "push"
+                skp = " (ไม้เงา — ข้ามไว้ ไม่นับเป็นไม้ที่เล่น)" if rec["pick"].get("skip") else ""
                 st.markdown(f'<div class="res {cls}">{esc(fe["home"])} {int(hg)}-{int(ag)} {esc(fe["away"])} · '
-                            f'{esc(rec["pick"]["label"])} → {q.result_word(r)} ({pf:+.2f} หน่วย)</div>', unsafe_allow_html=True)
+                            f'{esc(rec["pick"]["label"])}{skp} → {q.result_word(r)} ({pf:+.2f} หน่วย)</div>', unsafe_allow_html=True)
                 card("ผลของแต่ละตลาด", "".join(
                     f'<div class="row"><span class="l">{esc(market_th(k, fe))}</span><span class="r">{q.result_word(v[0])}</span></div>'
                     for k, v in outcomes.items()))
@@ -547,6 +585,46 @@ with tab3:
     S = store.state
     st.markdown(d.stats_dashboard(S, store.history), unsafe_allow_html=True)
     st.markdown(d.score_ladder(store.history, store.params["breakeven_wr"]), unsafe_allow_html=True)
+    with st.expander("⚙ ตั้งค่าระบบ: สถานะ “ข้าม” และการแช่แข็งน้ำหนัก Rule"):
+        P0 = store.params
+        a1, a2 = st.columns(2)
+        n_skip = a1.toggle("เปิดสถานะ “ข้าม” เมื่อสัญญาณอ่อน/ขัดกัน", value=bool(P0["skip_enabled"]), key="cfg_skip")
+        n_frz = a2.toggle("แช่แข็งน้ำหนัก Rule (เรียนรู้เบื้องหลัง)", value=bool(P0["freeze_weights"]), key="cfg_frz")
+        b1, b2 = st.columns(2)
+        n_min = b1.number_input("ข้ามเมื่อคะแนนต่ำกว่า", 0.0, 10.0, float(P0["skip_min_strength"]), 0.1, key="cfg_min")
+        n_cf = b2.number_input("ข้ามเมื่อฝั่งตรงข้ามได้คะแนน ≥ (สัดส่วนของฝั่งที่เลือก)", 0.1, 1.0, float(P0["skip_conflict"]), 0.05, key="cfg_cf")
+        c1_, c2_ = st.columns(2)
+        n_mv = c1_.checkbox("ข้ามเมื่อสัญญาณมาจากการไหลของราคาล้วน", value=bool(P0["skip_move_only"]), key="cfg_mv")
+        n_vf = c2_.checkbox("ข้ามเมื่อตรวจเหย้า/เยือนไม่ผ่าน", value=bool(P0["skip_verify_fail"]), key="cfg_vf")
+        if st.button("💾 บันทึกการตั้งค่า", key="cfg_save"):
+            store.state.setdefault("params", {}).update({"skip_enabled": n_skip, "freeze_weights": n_frz,
+                                                         "skip_min_strength": float(n_min), "skip_conflict": float(n_cf),
+                                                         "skip_move_only": n_mv, "skip_verify_fail": n_vf})
+            if n_frz:
+                q.weight_key(store)                # สร้างน้ำหนักเงาจากน้ำหนักปัจจุบัน
+            store.save()
+            st.success("บันทึกแล้ว · มีผลกับการวิเคราะห์ครั้งถัดไป (ไม้ที่บันทึกไว้แล้วไม่เปลี่ยน)")
+            cloud_warn()
+        st.caption("การตั้งค่าเหล่านี้ไม่เปลี่ยนไม้ที่ระบบเลือก แค่ติดป้าย “ข้าม” ให้ไม้ที่ไม่ผ่านเกณฑ์ และนับแยกในสถิติ")
+        sw_ = store.state.get("shadow_weights")
+        if sw_:
+            live = store.state["weights"]
+            diffs = sorted(((k, live.get(k, 1.0), v) for k, v in sw_.items() if k in q.DEFAULT_WEIGHTS),
+                           key=lambda x: -abs(x[2] - x[1]))[:10]
+            st.markdown(html_table(["Rule", "ชื่อ", "ที่ใช้ฟันธง", "เบื้องหลัง (เงา)"],
+                                   [[k, q.RULE_NAMES.get(k, ""), f"{a:.3f}", f"{b:.3f}"] for k, a, b in diffs]),
+                        unsafe_allow_html=True)
+            st.caption("น้ำหนักเงาคือค่าที่ระบบ “จะใช้” ถ้าไม่แช่แข็ง ใช้แท็บ “ทดสอบย้อนหลัง” เทียบว่าการปรับน้ำหนักช่วยจริงไหมก่อนนำมาใช้")
+            w1, w2 = st.columns(2)
+            ok_w = st.checkbox("ยืนยันการเปลี่ยนน้ำหนักที่ใช้ฟันธง", key="cfg_wok")
+            if w1.button("ใช้น้ำหนักเบื้องหลังแทน", disabled=not ok_w, key="cfg_apply"):
+                store.state["weights"].update({k: v for k, v in sw_.items() if k in q.DEFAULT_WEIGHTS})
+                store.save()
+                st.success("เปลี่ยนน้ำหนักที่ใช้ฟันธงเป็นค่าเบื้องหลังแล้ว")
+            if w2.button("รีเซ็ตน้ำหนักที่ใช้ฟันธงเป็นค่าเริ่มต้น", disabled=not ok_w, key="cfg_reset"):
+                store.state["weights"].update(q.DEFAULT_WEIGHTS)
+                store.save()
+                st.success("รีเซ็ตแล้ว (ค่าเริ่มต้นคือแบบที่ทำผลดีที่สุดใน backtest ของข้อมูลชุดปัจจุบัน)")
     st.markdown(d.rule_lifecycle(S, store.params), unsafe_allow_html=True)
     with st.expander("🗑 ลบรายการในประวัติ"):
         opts_h = {r["id"]: f"{r['features']['home']} vs {r['features']['away']} ({'ผลแล้ว' if r['status'] == 'settled' else 'รอผล'})"
