@@ -327,6 +327,10 @@ def analysis_body(res):
             f'<div class="wt fq-mut">×{w:.2f}</div></div>')
     out.append('<div class="fq-sec">Rule ที่ทำงาน <small>แสดง 8 อันดับแรก</small></div>')
     body = "".join(rows) if top else '<div class="fq-empty">ไม่มี Rule ใดทำงาน</div>'
+    sh = pick.get("shadow") or []
+    if sh:
+        items = " · ".join(f'{x["id"]} → {_market_th(x["market"], f)}' for x in sh[:8])
+        body += (f'<div class="fq-small fq-mut" style="margin-top:10px">Rule เงาที่เงื่อนไขตรงกับแมตช์นี้ (ติดตามผลเบื้องหลัง ไม่มีผลต่อการฟันธง): {e(items)}</div>')
     out.append(_card("สัญญาณที่ใช้ตัดสิน", body, "fq-c12"))
 
     # ---- บริบท + ตรวจเหย้า/เยือน
@@ -451,3 +455,142 @@ def stats_dashboard(state, history):
     out.append(_card("ประวัติ 10 รายการล่าสุด", "".join(hist), "fq-c12"))
     out.append("</div>")
     return "".join(out)
+
+
+# ------------------------------------------------------------------ ไล่ระดับคะแนนสัญญาณ
+def _pick_kind(r):
+    f, mk = r["features"], r["pick"]["market"]
+    if mk.startswith("HDP"):
+        return "แฮนดิแคปทีมต่อ" if mk == f.get("fav_hdp") else "แฮนดิแคปทีมรอง"
+    if mk.startswith("OU"):
+        return "สูง (Over)" if mk == "OU_OVER" else "ต่ำ (Under)"
+    return "1X2"
+
+
+def _ladder_rows(recs, nb):
+    recs = sorted(recs, key=lambda r: r["pick"]["strength"])
+    n = len(recs)
+    out = []
+    for i in range(nb):
+        seg = recs[i * n // nb:(i + 1) * n // nb]
+        if not seg:
+            continue
+        w = sum(1 for r in seg if r["pick_r"] > 0)
+        l = sum(1 for r in seg if r["pick_r"] < 0)
+        out.append((seg[0]["pick"]["strength"], seg[-1]["pick"]["strength"], len(seg), w, l,
+                    sum(r["pick_profit"] for r in seg) / len(seg)))
+    return out
+
+
+def _spearman(recs):
+    pts = [(r["pick"]["strength"], 1 if r["pick_r"] > 0 else 0) for r in recs if r["pick_r"] != 0]
+    n = len(pts)
+    if n < 8:
+        return None
+    xs = [p[0] for p in pts]
+    o = sorted(range(n), key=lambda i: xs[i])
+    rx = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and xs[o[j + 1]] == xs[o[i]]:
+            j += 1
+        for k in range(i, j + 1):
+            rx[o[k]] = (i + j) / 2
+        i = j + 1
+    ys = [p[1] for p in pts]
+    mx, my = sum(rx) / n, sum(ys) / n
+    sx = sum((a - mx) ** 2 for a in rx)
+    sy = sum((b - my) ** 2 for b in ys)
+    if sx <= 0 or sy <= 0:
+        return None
+    rho = sum((a - mx) * (b - my) for a, b in zip(rx, ys)) / (sx * sy) ** 0.5
+    return rho, rho * ((n - 1) ** 0.5)          # ค่า z โดยประมาณ
+
+
+def score_ladder(history, breakeven=0.525):
+    """ตารางไล่ระดับคะแนนสัญญาณ: อัตราชนะตามช่วงคะแนน ทั้งรวมและแยกประเภทไม้ (ไม้ที่ฟันธงจริง)"""
+    done = [r for r in history if r.get("status") == "settled" and r.get("pick") and "pick_r" in r]
+    if len(done) < 10:
+        return '<div class="fq"><div class="fq-empty">ต้องมีผลที่บันทึกแล้วอย่างน้อย 10 นัดจึงจะไล่ระดับคะแนนได้</div></div>'
+
+    def table(recs, nb):
+        rows = _ladder_rows(recs, nb)
+        head = ('<div class="fq-row head" style="grid-template-columns:1.3fr .6fr 1.6fr .8fr"><span>ช่วงคะแนน</span>'
+                '<span>ไม้</span><span>อัตราชนะ (เส้น = จุดคุ้มทุน)</span><span>ROI/ไม้</span></div>')
+        body = ""
+        for lo, hi, n, w, l, roi in rows:
+            wr = w / (w + l) if (w + l) else 0
+            col = "#34d399" if wr >= breakeven else "#f87171"
+            body += (f'<div class="fq-row" style="grid-template-columns:1.3fr .6fr 1.6fr .8fr"><span>{lo:.2f} – {hi:.2f}</span><span>{n}</span>'
+                     f'<div class="fq-w" style="grid-template-columns:1fr 46px;margin:0"><div class="tr"><i style="width:{wr * 100:.0f}%;background:{col}"></i>'
+                     f'<u style="left:{breakeven * 100:.1f}%"></u></div><span class="fq-small" style="text-align:right">{wr:.0%}</span></div>'
+                     f'<b class="{"fq-up" if roi >= 0 else "fq-down"}">{roi:+.2f}</b></div>')
+        sp = _spearman(recs)
+        if sp:
+            rho, z = sp
+            trend = ("คะแนนสูงชนะมากกว่า" if rho > 0 else "คะแนนสูงชนะน้อยกว่า") + (" (มีนัยสำคัญ)" if abs(z) >= 1.96 else " (ยังไม่มีนัยสำคัญ)")
+            body += f'<div class="fq-small fq-mut" style="margin-top:8px">ความสัมพันธ์คะแนน↔ชนะ (Spearman) {rho:+.2f} · z ≈ {z:+.1f} · {trend}</div>'
+        return head + body
+
+    nb = 5 if len(done) >= 75 else 3
+    out = ['<div class="fq">', '<div class="fq-sec">ไล่ระดับคะแนนสัญญาณ <small>ไม้ที่ฟันธงจริง · แบ่งกลุ่มเท่า ๆ กันตามคะแนน · '
+           f'จุดคุ้มทุน ≈ {breakeven:.1%}</small></div>']
+    out.append(_card(f"รวมทุกประเภท ({len(done)} ไม้)", table(done, nb)))
+    groups = {}
+    for r in done:
+        groups.setdefault(_pick_kind(r), []).append(r)
+    out.append('<div class="fq-grid">')
+    for kind in ("แฮนดิแคปทีมต่อ", "แฮนดิแคปทีมรอง", "สูง (Over)", "ต่ำ (Under)", "1X2"):
+        g = groups.get(kind) or []
+        if len(g) >= 12:
+            out.append(_card(f"{kind} ({len(g)} ไม้)", table(g, 3), "fq-c6"))
+        elif g:
+            out.append(_card(f"{kind} ({len(g)} ไม้)", '<div class="fq-mut fq-small">ข้อมูลยังน้อย (ต้องมีอย่างน้อย 12 ไม้)</div>', "fq-c6"))
+    out.append('</div><div class="fq-small fq-mut" style="margin:4px 2px 0">หมายเหตุ: คะแนนของไม้ที่บันทึกต่างช่วงเวลา '
+               'อาจอยู่คนละสเกลเพราะน้ำหนัก Rule ถูกปรับระหว่างทาง ใช้ดูแนวโน้ม ไม่ใช่ตัวตัดสินขาด</div></div>')
+    return "".join(out)
+
+
+# ------------------------------------------------------------------ สถานะ Rule ผู้สมัคร (เงา / ใช้งาน / ถอด)
+def rule_lifecycle(state, params):
+    life = state.get("lifecycle") or {}
+    learned = {r["id"]: r for r in state.get("learned_rules", [])}
+    rows = []
+    for rid, e in life.items():
+        dec = e["w"] + e["l"]
+        rows.append((rid, e, dec, e["w"] / dec if dec else 0.0))
+    for rid in learned:                          # Rule ที่ยังไม่เคยมีผลนอกกลุ่มตัวอย่าง
+        if rid not in life:
+            rows.append((rid, {"kind": "learned", "status": "shadow", "n": 0, "w": 0, "l": 0, "reason": "ยังไม่มีผลนอกกลุ่มตัวอย่าง"}, 0, 0.0))
+    if not rows:
+        return '<div class="fq"><div class="fq-empty">ยังไม่มี Rule ผู้สมัคร</div></div>'
+    order = {"active": 0, "shadow": 1, "retired": 2}
+    rows.sort(key=lambda x: (order.get(x[1]["status"], 3), -x[1]["n"]))
+    cnt = {k: sum(1 for x in rows if x[1]["status"] == k) for k in order}
+    lab = {"active": ("ใช้งาน", "ok"), "shadow": ("เงา (ระงับ)", "off"), "retired": ("ถอดแล้ว", "bad")}
+    head = ('<div class="fq-row head" style="grid-template-columns:.7fr 2.4fr .9fr 1.4fr"><span>Rule</span><span>เงื่อนไข / เหตุผลสถานะ</span>'
+            '<span>สถานะ</span><span>ผลนอกกลุ่มตัวอย่าง</span></div>')
+    body = ""
+    for rid, e, dec, wr in rows[:40]:
+        if e["kind"] == "learned" and rid in learned:
+            lr = learned[rid]
+            desc = f'{" + ".join(lr["tags"])} → {q.ROLE_TH[lr["role"]]}'
+        else:
+            desc = q.RULE_NAMES.get(rid, rid)
+        t, kd = lab.get(e["status"], (e["status"], "off"))
+        need = max(0, params["judge_n"] - e["n"])
+        prog = (f'{e["w"]}/{dec} = {wr:.0%}' if dec else "–") + (f' · อีก {need} ครั้งถึงตัดสิน' if e["status"] == "shadow" and need else "")
+        body += (f'<div class="fq-row" style="grid-template-columns:.7fr 2.4fr .9fr 1.4fr"><b>{e_(rid)}</b>'
+                 f'<div class="rn"><b>{e_(desc)}</b><small>{e_(e.get("reason", ""))}</small></div>'
+                 f'<span>{_chip(t, kd)}</span><span class="fq-small">{prog}</span></div>')
+    rules = (f'<div class="fq-small fq-mut" style="margin-bottom:8px">ทุก Rule ใหม่ (ที่ระบบสร้าง และ R28–R40 จากเอกสาร) เริ่มเป็น <b>เงา</b>: '
+             f'ติดตามผลเบื้องหลังโดยไม่มีผลต่อการฟันธง · <b>ปลดล็อค</b> เมื่อชนะ ≥ {params["unlock_wr"]:.0%} จาก ≥ {params["unlock_min_n"]} ครั้ง '
+             f'(และสูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ) หรือครบ {params["judge_n"]} ครั้งแล้วผ่านเกณฑ์ · <b>ถอด</b> เมื่อครบ {params["judge_n"]} ครั้งไม่ผ่าน, '
+             f'ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ หรืออัตราชนะลดลงต่อเนื่อง 3 ช่วง</div>')
+    tag = " ".join(_chip("{} {}".format(t_, cnt[k_]), c_) for k_, t_, c_ in (("active", "ใช้งาน", "ok"), ("shadow", "เงา", "off"), ("retired", "ถอด", "bad")))
+    return '<div class="fq">' + _card("สถานะ Rule ผู้สมัคร", rules + head + body, "", tag) + '</div>'
+
+
+def e_(x):
+    return e(x)
