@@ -42,6 +42,9 @@ CSS = """
 .fq-donut > div { width:74px; height:74px; border-radius:50%; background:#0e182b; display:flex; flex-direction:column;
                   align-items:center; justify-content:center; font-weight:700; font-size:1.2rem; line-height:1.1; }
 .fq-donut small { font-weight:400; font-size:.64rem; color:var(--mut); }
+.fq-lvl { display:flex; align-items:flex-end; gap:5px; height:36px; }
+.fq-lvl i { display:block; width:12px; border-radius:3px; }
+.fq-best { margin-top:8px; padding:7px 10px; border-radius:10px; background:rgba(52,211,153,.12); border:1px solid rgba(110,231,183,.3); font-size:.8rem; color:#a7f3d0; }
 .fq-meter { height:6px; border-radius:99px; background:rgba(255,255,255,.1); overflow:hidden; margin-top:8px; }
 .fq-meter > i { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,var(--acc),#22d3ee); }
 
@@ -184,13 +187,18 @@ def kpi_and_match(res):
               f'<div class="fq-small fq-mut">ไม้เงา (ติดตามผลเบื้องหลัง): <b>{e(pick["label"])}</b></div>'
               f'<ul class="fq-ev" style="margin-top:4px">{why}</ul></div></div>')
     else:
+        bst = pick.get("best")
+        best_html = (f'<div class="fq-best">💰 ราคาดีที่สุด: <b>{e(bst["book"])} @{bst["price"]:.2f}</b> '
+                     f'(ดีกว่าราคามัธยฐาน +{bst["gain"]:.2f} · จุดคุ้มทุน {bst["breakeven"]:.1%} จาก {bst["breakeven_median"]:.1%})</div>') if bst else ""
         c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero{" low" if low else ""}"><div class="fq-h"><span>สัญญาณฟันธงเดี่ยว</span>'
               f'<span class="fq-chip off">ใช้ราคาปัจจุบัน</span></div><div><div class="big">{e(pick["label"])}</div>'
-              f'<div class="fq-chips">{"".join(chips)}</div>{runner}</div></div>')
-    conf = pick["confidence"]
-    col = "#94a3b8" if low else "#14b8a6"
-    c2 = _card("ความมั่นใจเชิงสัญญาณ",
-               f'<div class="fq-donut" style="--p:{conf:.0f};--c:{col}"><div>{conf:.0f}%<small>ยังไม่สอบเทียบ</small></div></div>', "fq-c3 fq-m6 fq-kpi")
+              f'<div class="fq-chips">{"".join(chips)}</div>{best_html}{runner}</div></div>')
+    lv = {"ต่ำ": 1, "กลาง": 2, "สูง": 3}.get(pick["tier"], 1)
+    bars = "".join(f'<i style="height:{14 + 10 * i}px;background:{"#14b8a6" if i < lv else "rgba(255,255,255,.12)"}"></i>' for i in range(3))
+    c2 = _card("ระดับสัญญาณ",
+               f'<div style="display:flex;align-items:flex-end;gap:14px"><div class="fq-lvl">{bars}</div>'
+               f'<div><div class="num">{e(pick["tier"])}</div><div class="fq-small fq-mut">จัดระดับจากคะแนน · ไม่ใช่โอกาสชนะ</div></div></div>',
+               "fq-c3 fq-m6 fq-kpi")
     c3 = _card("คะแนนสัญญาณ",
                f'<div><div class="num">{pick["strength"]:.2f}</div><div class="fq-small fq-mut">เต็ม ~4.0 ขึ้นไป</div>'
                f'<div class="fq-meter"><i style="width:{min(pick["strength"] / 4 * 100, 100):.0f}%"></i></div></div>', "fq-c2 fq-m6 fq-kpi")
@@ -401,6 +409,14 @@ def stats_dashboard(state, history):
     kp.append(_card("บันทึกผลแล้ว", f'<div class="num">{len(done)}</div><div class="fq-small fq-mut">ชนะ {w} · เจ๊า {p} · แพ้ {l}</div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("รอผล", f'<div class="num">{len(pend)}</div><div class="fq-small fq-mut">สัญญาณที่ยังไม่จบเกม</div>', "fq-c3 fq-m6 fq-kpi"))
     out = ['<div class="fq"><div class="fq-grid">' + "".join(kp) + "</div>"]
+    wb = [r for r in done if "pick_profit_best" in r]
+    if wb:
+        pm, pb = sum(r["pick_profit"] for r in wb), sum(r["pick_profit_best"] for r in wb)
+        out.append(_card(f"Line shopping · {len(wb)} ไม้ที่มีข้อมูลราคาดีที่สุด",
+                         f'<div class="fq-small">กำไรที่ราคามัธยฐาน <b class="{"fq-up" if pm >= 0 else "fq-down"}">{pm:+.2f}</b> · '
+                         f'ถ้าวางที่เจ้าที่ให้ราคาดีที่สุด <b class="{"fq-up" if pb >= 0 else "fq-down"}">{pb:+.2f}</b> '
+                         f'(ต่าง {pb - pm:+.2f} หน่วย = {(pb - pm) / len(wb):+.3f} ต่อไม้)</div>'
+                         '<div class="fq-small fq-mut" style="margin-top:6px">สถิติหลักยังคิดที่ราคามัธยฐานเพื่อเทียบกับประวัติเดิมได้</div>'))
     if skipped:
         sw = sum(1 for r in skipped if r["pick_r"] > 0)
         sl = sum(1 for r in skipped if r["pick_r"] < 0)
