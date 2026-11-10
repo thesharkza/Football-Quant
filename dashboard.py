@@ -177,9 +177,16 @@ def kpi_and_match(res):
     ru = [r for r in pick.get("runner_up", []) if r[1] > 0.05][:1]
     runner = (f'<div class="fq-small fq-mut" style="margin-top:6px">ทางเลือกรอง: {e(_market_th(ru[0][0], f))} '
               f'({ru[0][1]:.2f})</div>') if ru else ""
-    c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero{" low" if low else ""}"><div class="fq-h"><span>สัญญาณฟันธงเดี่ยว</span>'
-          f'<span class="fq-chip off">ใช้ราคาปัจจุบัน</span></div><div><div class="big">{e(pick["label"])}</div>'
-          f'<div class="fq-chips">{"".join(chips)}</div>{runner}</div></div>')
+    if pick.get("skip"):
+        why = "".join(f"<li>{e(x)}</li>" for x in pick.get("skip_reasons", []))
+        c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero low"><div class="fq-h"><span>สัญญาณ: ข้ามไม้นี้</span>'
+              f'<span class="fq-chip warn">ไม่นับเป็นไม้ที่เล่น</span></div><div><div class="big">⏭ ข้าม</div>'
+              f'<div class="fq-small fq-mut">ไม้เงา (ติดตามผลเบื้องหลัง): <b>{e(pick["label"])}</b></div>'
+              f'<ul class="fq-ev" style="margin-top:4px">{why}</ul></div></div>')
+    else:
+        c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero{" low" if low else ""}"><div class="fq-h"><span>สัญญาณฟันธงเดี่ยว</span>'
+              f'<span class="fq-chip off">ใช้ราคาปัจจุบัน</span></div><div><div class="big">{e(pick["label"])}</div>'
+              f'<div class="fq-chips">{"".join(chips)}</div>{runner}</div></div>')
     conf = pick["confidence"]
     col = "#94a3b8" if low else "#14b8a6"
     c2 = _card("ความมั่นใจเชิงสัญญาณ",
@@ -337,7 +344,8 @@ def analysis_body(res):
     ctx = m.get("context") or {}
     labels = [("derby", "ดาร์บี้"), ("high_scoring_league", "ลีกประตูเยอะ"), ("high_draw_league", "ลีกเสมอสูง"),
               ("high_volatility", "ลีกผันผวนสูง"), ("cup_group_stage", "ถ้วยรอบแบ่งกลุ่ม"), ("knockout", "น็อคเอาต์"),
-              ("continental_cup", "ถ้วยทวีป"), ("late_goal_tendency", "ยิงท้ายเกมสูง")]
+              ("continental_cup", "ถ้วยทวีป"), ("late_goal_tendency", "ยิงท้ายเกมสูง"),
+              ("women_or_regional", "ฟุตบอลหญิง/ลีกรอง"), ("asian_cup", "ถ้วยเอเชีย")]
     chips = [_chip({"league": "ลีก", "cup": "ถ้วย", "playoff": "เพลย์ออฟ"}.get(ctx.get("type", "league"), "ลีก"), "acc")]
     chips += [_chip(lb, "") for k, lb in labels if ctx.get(k)]
     if ctx.get("desperation") in ("home", "away"):
@@ -374,9 +382,11 @@ def report_document(res):
 
 # ------------------------------------------------------------------ แดชบอร์ดสถิติ
 def stats_dashboard(state, history):
-    done = [r for r in history if r.get("status") == "settled"]
+    allset = [r for r in history if r.get("status") == "settled"]
+    skipped = [r for r in allset if (r.get("pick") or {}).get("skip")]
+    done = [r for r in allset if not (r.get("pick") or {}).get("skip")]      # ไม้ที่เล่นจริง
     pend = [r for r in history if r.get("status") == "pending"]
-    if not done:
+    if not done and not skipped:
         return ('<div class="fq"><div class="fq-empty">ยังไม่มีผลที่บันทึก · ใส่ผลจริงที่แท็บ “บันทึกผล” เพื่อดูสถิติและให้ระบบเรียนรู้'
                 f'<br><span class="fq-small">รอผล {len(pend)} นัด</span></div></div>')
     w = sum(1 for r in done if r["pick_r"] > 0)
@@ -384,13 +394,27 @@ def stats_dashboard(state, history):
     p = len(done) - w - l
     pr = sum(r["pick_profit"] for r in done)
     wr = w / (w + l) if (w + l) else 0
-    roi = pr / len(done)
+    roi = pr / len(done) if done else 0.0
     kp = []
     kp.append(_card("อัตราชนะ (ไม่นับเจ๊า)", f'<div class="fq-donut" style="--p:{wr * 100:.0f};--c:{"#34d399" if wr >= .5 else "#f87171"}"><div>{wr:.0%}<small>{w}ช / {l}พ</small></div></div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("กำไรสุทธิ (หน่วย)", f'<div class="num {"fq-up" if pr >= 0 else "fq-down"}">{pr:+.2f}</div><div class="fq-small fq-mut">ROI {roi:+.1%} ต่อไม้</div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("บันทึกผลแล้ว", f'<div class="num">{len(done)}</div><div class="fq-small fq-mut">ชนะ {w} · เจ๊า {p} · แพ้ {l}</div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("รอผล", f'<div class="num">{len(pend)}</div><div class="fq-small fq-mut">สัญญาณที่ยังไม่จบเกม</div>', "fq-c3 fq-m6 fq-kpi"))
     out = ['<div class="fq"><div class="fq-grid">' + "".join(kp) + "</div>"]
+    if skipped:
+        sw = sum(1 for r in skipped if r["pick_r"] > 0)
+        sl = sum(1 for r in skipped if r["pick_r"] < 0)
+        spr = sum(r["pick_profit"] for r in skipped)
+        verdict = ("ไม้ที่ข้ามทำผลแย่กว่าไม้ที่เล่น → การข้ามช่วย" if spr / len(skipped) < roi else
+                   "ไม้ที่ข้ามทำผลดีกว่าหรือพอ ๆ กับไม้ที่เล่น → การข้ามยังไม่ช่วย")
+        out.append(_card(f"ไม้ที่ข้าม (ติดตามเป็นไม้เงา) · {len(skipped)} ไม้",
+                         f'<div class="fq-small">ชนะ {sw} · แพ้ {sl} · อัตราชนะ <b>{(sw / (sw + sl)) if (sw + sl) else 0:.0%}</b> · '
+                         f'กำไรถ้าเล่น <b class="{"fq-up" if spr >= 0 else "fq-down"}">{spr:+.2f}</b> (ROI {spr / len(skipped):+.1%}) · '
+                         f'เทียบไม้ที่เล่น ROI {roi:+.1%}</div><div class="fq-small fq-mut" style="margin-top:6px">{e(verdict)} · '
+                         'ต้องมีไม้ที่ข้ามหลายสิบไม้จึงจะสรุปได้ · สถิติด้านบนนับเฉพาะไม้ที่เล่น</div>'))
+    if not done:
+        out.append('</div>')
+        return "".join(out)
 
     # กำไร/ขาดทุนต่อไม้
     last = done[-40:]
