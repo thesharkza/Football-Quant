@@ -84,6 +84,14 @@ DEFAULT_PARAMS = {
     "lb_z_fast": 1.28, "lb_z_judge": 1.645,
     "retire_min_n": 20,          # ใช้ครบเท่านี้แล้วอัตราชนะต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ถอด
     "decline_window": 10,        # ขนาดช่วงที่ใช้ตรวจว่าอัตราชนะลดลงต่อเนื่อง 3 ช่วง
+    # --- สถานะ "ข้าม": ไม้ที่สัญญาณอ่อนหรือขัดกัน ยังคำนวณไม้เงาไว้ติดตามผล แต่ไม่นับเป็นไม้ที่เล่น ---
+    "skip_enabled": True,
+    "skip_min_strength": 1.2,    # คะแนนต่ำกว่านี้ = สัญญาณอ่อน
+    "skip_conflict": 0.6,        # คะแนนฝั่งตรงข้าม >= 60% ของฝั่งที่เลือก = สัญญาณขัดกัน
+    "skip_move_only": True,      # สัญญาณมาจากการไหลของราคาล้วน = ข้าม
+    "skip_verify_fail": True,    # ตรวจเหย้า/เยือนไม่ผ่าน = ข้าม
+    # --- แช่แข็งน้ำหนัก Rule: น้ำหนักที่ใช้ฟันธงไม่เปลี่ยน ระบบปรับ "น้ำหนักเงา" ไว้เบื้องหลังแทน ---
+    "freeze_weights": True,
 }
 
 DEFAULT_WEIGHTS = {
@@ -334,6 +342,8 @@ def build_features(m, P):
     f["veto"] = sorted(veto)
 
     f["form"] = m.get("form")
+    f["away_form_away"] = m.get("away_form_away")
+    f["venue_stats"] = bool(st.get("venue"))
     f["n_books"] = m.get("n_books")
     f["verify"] = verify_home_away(m, f)
     f["verify_fail"] = any(not ok for ok, _ in f["verify"])
@@ -774,6 +784,9 @@ def _xv(f):
     fav = f["fav"]
     hwr, hdr = _form_stats(f, "home")
     awr, adr = _form_stats(f, "away")
+    afa = f.get("away_form_away") or {}
+    if all(isinstance(afa.get(k), int) for k in ("w", "d", "l")) and sum(afa[k] for k in ("w", "d", "l")) > 0:
+        awr = 100.0 * afa["w"] / sum(afa[k] for k in ("w", "d", "l"))          # ใช้ฟอร์มเกมเยือนถ้ามี (R32/R34)
     vr = f.get("value_ratio")
     return {"home_ga": f.get("home_ga"), "away_ga": f.get("fav_ga") if fav == "away" else f.get("dog_ga"),
             "hwr": hwr, "awr": awr, "hdr": hdr, "adr": adr,
@@ -1374,6 +1387,21 @@ def analyze_features(m, f, store):
     if f.get("verify_fail"):
         tier = "ต่ำ"                                 # Home/Away Verification ไม่ผ่าน -> ไม่ให้ระดับสูง/กลาง
 
+    # --- สถานะ "ข้าม" (ไม้ยังถูกคำนวณเป็นไม้เงา เพื่อติดตามว่าการข้ามช่วยจริงหรือไม่) ---
+    pair = {"HDP_HOME": "HDP_AWAY", "HDP_AWAY": "HDP_HOME", "OU_OVER": "OU_UNDER", "OU_UNDER": "OU_OVER",
+            "X12_HOME": "HDP_AWAY", "X12_AWAY": "HDP_HOME"}
+    base_mk = mk.replace("X12_", "HDP_") if mk.startswith("X12_") else mk
+    support, oppose = sc.get(base_mk, 0.0), sc.get(pair.get(mk, ""), 0.0)
+    skip = []
+    if P.get("skip_enabled"):
+        if strength < P["skip_min_strength"]:
+            skip.append(f"สัญญาณอ่อน (คะแนน {strength:.2f} < {P['skip_min_strength']:g})")
+        if support > 0 and oppose / support >= P["skip_conflict"]:
+            skip.append(f"สัญญาณขัดกัน (ฝั่งตรงข้าม {oppose:.2f} = {oppose / support:.0%} ของฝั่งที่เลือก {support:.2f})")
+        if P.get("skip_move_only") and mk in moved:
+            skip.append("มาจากการไหลของราคาล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน")
+        if P.get("skip_verify_fail") and f.get("verify_fail"):
+            skip.append("ตรวจเหย้า/เยือนไม่ผ่าน")
     for c in contribs:
         c["eff"] = round(c["eff"], 4)                # ปัดเศษเพื่อเก็บ (หลังรวมคะแนนด้วยค่าเต็มแล้ว)
     price, label = pick_label(m, f, mk)
@@ -1381,7 +1409,8 @@ def analyze_features(m, f, store):
             "label": label, "price_win": price, "veto": sorted(veto),
             "move_only": mk in moved, "verify_fail": bool(f.get("verify_fail")),
             "runner_up": [(c[0], round(c[1], 3)) for c in cands[1:3]],
-            "shadow": shadow, "score_mode": mode}
+            "shadow": shadow, "score_mode": mode,
+            "skip": bool(skip), "skip_reasons": skip, "support": round(support, 3), "oppose": round(oppose, 3)}
     return f, contribs, pick
 
 
@@ -1477,6 +1506,10 @@ def render_report(m, f, contribs, pick, store):
         L.append("  - ไม่พบความผิดปกติเด่นชัดของ Trap / Fake Steam ราคาเคลื่อนไหวอยู่ในกรอบปกติ")
 
     L.append("\n🎯 สัญญาณฟันธงเดี่ยว (Single Best Pick)")
+    if pick.get("skip"):
+        L.append("  ⏭ ข้ามไม้นี้ (ไม่นับเป็นไม้ที่เล่น) — ไม้เงาที่ติดตามผล:")
+        for x in pick.get("skip_reasons", []):
+            L.append(f"     · {x}")
     L.append(f"  >>> {pick['label']} <<<   (ราคาปัจจุบัน)")
     L.append(f"  ความมั่นใจ: {pick['confidence']:.0f}%  (ระดับ{pick['tier']}, คะแนน {pick['strength']:.2f})")
     if pick["veto"]:
@@ -1532,8 +1565,22 @@ def result_word(r):
 # ----------------------------------------------------------------------------
 # 8) การเรียนรู้: ปรับน้ำหนัก Rule + สร้าง Rule ใหม่
 # ----------------------------------------------------------------------------
+def weight_key(store):
+    """ชุดน้ำหนักที่การเรียนรู้ปรับ: แช่แข็ง -> shadow_weights (เบื้องหลัง) / ไม่แช่แข็ง -> weights (ใช้ฟันธงจริง)"""
+    S = store.state
+    if store.params.get("freeze_weights"):
+        if "shadow_weights" not in S:
+            S["shadow_weights"] = dict(S["weights"])
+        for k, v in DEFAULT_WEIGHTS.items():
+            S["shadow_weights"].setdefault(k, v)
+        return "shadow_weights"
+    return "weights"
+
+
 def update_weights(store, rec, outcomes):
     P, S = store.params, store.state
+    wk = weight_key(store)
+    W = S[wk]
     agg, changes = {}, {}
     valid_learned = {r_["id"] for r_ in S.get("learned_rules", [])}
     for c in rec["contribs"]:
@@ -1552,12 +1599,12 @@ def update_weights(store, rec, outcomes):
         st = S["rule_stats"].setdefault(rid, {"n": 0, "sum_r": 0.0})
         st["n"] += 1
         st["sum_r"] += rr
-        old = S["weights"].get(rid, 1.0)
+        old = W.get(rid, 1.0)
         lr = max(P["lr_min"], P["lr"] / math.sqrt(st["n"]))
         w = old * (1 + lr * rr)
         w += P["decay"] * (1.0 - w)
         w = min(P["w_max"], max(P["w_min"], w))
-        S["weights"][rid] = round(w, 4)
+        W[rid] = round(w, 4)
         changes[rid] = (old, w, rr)
     return changes
 
@@ -1637,6 +1684,8 @@ def discover_rules(store, verbose=True):
         rid = f"L{S['meta']['next_learned']:03d}"
         S["meta"]["next_learned"] += 1
         S["weights"][rid] = 1.0
+        if "shadow_weights" in S:
+            S["shadow_weights"][rid] = 1.0
         rule = {"id": rid, "tags": list(combo), "role": role, "n": n, "wr": round(p, 4),
                 "strength": round(min(2.5, max(0.3, P["learned_base"] * (p - 0.5) * 4)), 3),
                 "enabled": True, "created": time.strftime("%Y-%m-%d %H:%M")}
@@ -1867,6 +1916,54 @@ def consolidate_books(m):
     return w
 
 
+def sanity_checks(m):
+    """ตรวจความสมเหตุสมผลของราคาที่อ่านจากรูป คืน (คำเตือน, ข้อผิดพลาดร้ายแรง)
+    ร้ายแรง = มีแนวโน้มอ่านรูปผิด (เช่น เครื่องหมายเรตกลับด้าน, ค่าน้ำ/ราคาผิดรูป) -> ควรตรวจก่อนวิเคราะห์"""
+    warn, crit = [], []
+    books = [b for b in (m.get("books") or []) if isinstance(b, dict)] or [{"name": "ราคารวม", "x12": m.get("x12"), "hdp": m.get("hdp"), "ou": m.get("ou")}]
+    flips = []
+    for b in books:
+        nm = b.get("name", "?")
+        for t, tn in (("open", "เปิด"), ("current", "ปัจจุบัน")):
+            x = (b.get("x12") or {}).get(t)
+            if isinstance(x, list) and len(x) == 3 and all(_num(v) and v > 1 for v in x):
+                ovr = sum(1 / v for v in x)
+                if ovr < 0.98 or ovr > 1.20:
+                    crit.append(f"{nm} 1X2 {tn}: ผลรวมโอกาส {ovr:.0%} ผิดปกติ (ปกติ 100-115%) อาจอ่านราคาผิด/สลับคอลัมน์")
+                elif ovr > 1.12:
+                    warn.append(f"{nm} 1X2 {tn}: ค่าคอมมิชชันสูง ({ovr - 1:.0%})")
+            h = (b.get("hdp") or {}).get(t)
+            if isinstance(h, dict) and all(_num(h.get(k)) for k in ("line", "home_water", "away_water")):
+                hw, aw = h["home_water"], h["away_water"]
+                hw, aw = (hw - 1 if hw > 1.5 else hw), (aw - 1 if aw > 1.5 else aw)
+                sm = hw + aw
+                if sm < 1.6 or sm > 2.2:
+                    crit.append(f"{nm} แฮนดิแคป {tn}: ค่าน้ำรวม {sm:.2f} ผิดปกติ (ปกติ ~1.80-2.05)")
+                elif sm < 1.72 or sm > 2.08:
+                    warn.append(f"{nm} แฮนดิแคป {tn}: ค่าน้ำรวม {sm:.2f} ค่อนข้างผิดปกติ")
+                if isinstance(x, list) and len(x) == 3 and all(_num(v) for v in x) and abs(h["line"]) >= 0.5:
+                    fav_x = "home" if x[0] < x[2] else "away"
+                    fav_h = "home" if h["line"] < 0 else "away"
+                    if fav_x != fav_h and abs(x[0] - x[2]) > 0.3:
+                        flips.append(f"{nm} ({tn})")
+            o = (b.get("ou") or {}).get(t)
+            if isinstance(o, dict) and all(_num(o.get(k)) for k in ("line", "over", "under")):
+                ov, un = o["over"], o["under"]
+                ov, un = (ov - 1 if ov > 1.5 else ov), (un - 1 if un > 1.5 else un)
+                if not 1.6 <= ov + un <= 2.2:
+                    crit.append(f"{nm} สูง/ต่ำ {tn}: ค่าน้ำรวม {ov + un:.2f} ผิดปกติ")
+                if not 0.5 <= o["line"] <= 7.5 or abs(o["line"] * 4 - round(o["line"] * 4)) > 1e-6:
+                    crit.append(f"{nm} สูง/ต่ำ {tn}: เรต {o['line']} ไม่ใช่เรตที่เป็นไปได้")
+        ho, hc = ((b.get("hdp") or {}).get("open") or {}), ((b.get("hdp") or {}).get("current") or {})
+        if _num(ho.get("line")) and _num(hc.get("line")) and abs(ho["line"] - hc["line"]) > 1.0:
+            warn.append(f"{nm}: เรตแฮนดิแคปขยับมากผิดปกติ ({ho['line']:+g} → {hc['line']:+g}) โปรดตรวจรูป")
+        if _num(ho.get("line")) and _num(hc.get("line")) and ho["line"] * hc["line"] < 0 and min(abs(ho["line"]), abs(hc["line"])) >= 0.25:
+            crit.append(f"{nm}: เรตแฮนดิแคปเปลี่ยนฝั่ง ({ho['line']:+g} → {hc['line']:+g}) มักเกิดจากอ่านเครื่องหมายผิด")
+    if flips:
+        crit.append("เรตแฮนดิแคปขัดกับราคา 1X2 (ทีมต่อคนละฝั่ง) ที่: " + ", ".join(flips) + " -> เครื่องหมาย +/- อาจกลับด้าน หรือสลับเหย้า/เยือน")
+    return warn, crit
+
+
 def get_api_key(getter):
     """getter(name) -> ค่า secret/env ; ใช้คีย์ Gemini เท่านั้น"""
     return getter("GEMINI_API_KEY") or getter("GOOGLE_API_KEY")
@@ -1940,6 +2037,11 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
 6. motivation.desperation = "home" หรือ "away" เฉพาะทีมที่กำลังหนีตก/ลุ้นแชมป์/ลุ้นโควตาในช่วงท้ายฤดูกาลอย่างชัดเจน ไม่เช่นนั้น null
 7. home_form_home = ผลเกมเหย้า 5 นัดหลังสุดของเจ้าบ้าน (ลีกเดียวกัน) เป็น {"w":..,"d":..,"l":..} รวมต้องเท่ากับ 5 ไม่ครบ/ไม่ชัวร์ให้ null
 8. late_goal_tendency = true เฉพาะเมื่อมีสถิติว่า 2 ทีมยิงประตูช่วงท้ายเกมบ่อยชัดเจน ไม่เช่นนั้น false
+11. women_or_regional = true ถ้าเป็นฟุตบอลหญิง หรือลีกระดับรอง/ลีกภูมิภาค (ต่ำกว่าลีกสูงสุดของประเทศ) ; asian_cup = true ถ้าเป็นถ้วยระดับเอเชีย (AFC)
+12. venue_stats = สถิติแยกสนามจาก 5 นัดหลังสุด (ลีก/รายการเดียวกันถ้ามี): เจ้าบ้าน "เฉพาะเกมเหย้า" และทีมเยือน "เฉพาะเกมเยือน"
+    เป็นค่าเฉลี่ยต่อนัด: home_gf, home_ga (ประตูได้/เสียของเจ้าบ้านในบ้าน), away_gf, away_ga (ของทีมเยือนนอกบ้าน), games_home, games_away (จำนวนนัดที่ใช้)
+    ไม่พบ/ไม่ชัวร์ให้ null ทั้งก้อน
+13. away_form_away = ผลเกมเยือน 5 นัดหลังสุดของทีมเยือน เป็น {"w":..,"d":..,"l":..} รวม = 5 ไม่ชัวร์ให้ null
 9. evidence = ข้อความสั้นภาษาไทยไม่เกิน 6 ข้อ บอกหลักฐานสำคัญของแต่ละ flag ที่เป็น true
 10. confidence = high | medium | low
 
@@ -1949,7 +2051,9 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
  "league":{"size":null,"avg_goals_per_match":null,"draw_rate_pct":null,"high_scoring":false,"high_draw":false,"high_volatility":false},
  "standings":{"home_rank":null,"away_rank":null},
  "motivation":{"desperation":null,"reason":null},
- "home_form_home":null,"late_goal_tendency":false,
+ "home_form_home":null,"away_form_away":null,"late_goal_tendency":false,
+ "women_or_regional":false,"asian_cup":false,
+ "venue_stats":{"home_gf":null,"home_ga":null,"away_gf":null,"away_ga":null,"games_home":null,"games_away":null},
  "evidence":["..."],"confidence":"medium"}"""
 
 
@@ -2020,6 +2124,19 @@ def apply_research(m, r, sources=None, queries=None):
     if isinstance(hf, dict) and all(isinstance(hf.get(k), int) and not isinstance(hf.get(k), bool) for k in ("w", "d", "l")) \
             and hf["w"] + hf["d"] + hf["l"] == 5 and not m.get("home_form_home"):
         m["home_form_home"] = {k: hf[k] for k in ("w", "d", "l")}
+    for k in ("women_or_regional", "asian_cup"):
+        if _bool(r.get(k)) is not None:
+            ctx[k] = r[k]
+    af = r.get("away_form_away")
+    if isinstance(af, dict) and all(isinstance(af.get(k), int) and not isinstance(af.get(k), bool) for k in ("w", "d", "l")) \
+            and af["w"] + af["d"] + af["l"] == 5 and not m.get("away_form_away"):
+        m["away_form_away"] = {k: af[k] for k in ("w", "d", "l")}
+    vs = r.get("venue_stats") if isinstance(r.get("venue_stats"), dict) else {}
+    keys = ("home_gf", "home_ga", "away_gf", "away_ga")
+    if all(_num(vs.get(k)) and 0 <= vs[k] <= 6 for k in keys) and not (m.get("stats") or {}).get("venue"):
+        m["stats"] = {**{k: float(vs[k]) for k in keys}, "venue": True,
+                      "games_home": vs.get("games_home") if _num(vs.get("games_home")) else None,
+                      "games_away": vs.get("games_away") if _num(vs.get("games_away")) else None}
     ev = [str(x) for x in (r.get("evidence") or []) if x][:6] if isinstance(r.get("evidence"), list) else []
     m["research"] = {"evidence": ev, "sources": (sources or [])[:8], "queries": (queries or [])[:6],
                      "confidence": r.get("confidence") if r.get("confidence") in ("high", "medium", "low") else None,
@@ -2047,6 +2164,9 @@ def _num(v):
 def validate_match(m):
     """ตรวจ/แก้ข้อมูลที่สกัดได้ คืน (m, warnings) หรือ raise ValueError ถ้าขาดข้อมูลหลัก"""
     w = list(m.get("warnings") or [])
+    sw, sc_ = sanity_checks(m)
+    w += sw
+    m["critical"] = sc_
     if m.get("books"):
         w += consolidate_books(m)
     for k in ("x12", "hdp"):
@@ -2088,7 +2208,10 @@ def validate_match(m):
         st = {"home_gf": fm["home"]["gf"] / n_("home"), "home_ga": fm["home"]["ga"] / n_("home"),
               "away_gf": fm["away"]["gf"] / n_("away"), "away_ga": fm["away"]["ga"] / n_("away")}
         w.append("สถิติประตูได้/เสียคำนวณจากฟอร์ม 5 นัดหลัง (ไม่แยกเหย้า/เยือน)")
+    venue = bool((m.get("stats") or {}).get("venue"))
     m["stats"] = {k: round(v, 3) for k, v in st.items()}
+    if venue:
+        m["stats"]["venue"] = True                   # สถิติแยกเหย้า/เยือนจากการค้นหา
     m["h2h"] = [e for e in (m.get("h2h") or []) if _num(e.get("hg")) and _num(e.get("ag"))][:5]
     if not m["h2h"]:
         w.append("ไม่พบข้อมูล H2H ใน 5 รูป (Rule 5 จะไม่ทำงาน)")
@@ -2233,7 +2356,11 @@ def rebuild_learning(store):
     (รีเซ็ตน้ำหนัก/Rule ที่เรียนรู้ แล้ว replay ทีละนัด โดยให้การค้นหา Rule ใหม่เห็นเฉพาะนัดก่อนหน้า)
     ใช้หลังแก้สกอร์หรือยกเลิกผล เพื่อไม่ให้ข้อมูลการเรียนรู้ผิดตามสกอร์ที่ใส่ผิด คืนจำนวนนัดที่ replay"""
     S = store.state
-    S["weights"] = dict(DEFAULT_WEIGHTS)
+    frozen = bool(store.params.get("freeze_weights"))
+    live = {k: v for k, v in S["weights"].items() if k in DEFAULT_WEIGHTS} if frozen else None
+    S["weights"] = dict(live) if frozen else dict(DEFAULT_WEIGHTS)
+    if frozen:
+        S["shadow_weights"] = dict(DEFAULT_WEIGHTS)
     S["rule_stats"] = {}
     S["learned_rules"] = []
     S["lifecycle"] = {}
@@ -2274,14 +2401,14 @@ def edit_result(store, rid, hg, ag):
     if rec is None or rec.get("status") != "settled":
         raise ValueError("ไม่พบรายการที่บันทึกผลแล้ว")
     old = {"score": list(rec["score"]), "r": rec["pick_r"], "profit": rec["pick_profit"]}
-    old_w, old_rules = dict(store.state["weights"]), len(store.state["learned_rules"])
+    old_w, old_rules = dict(store.state[weight_key(store)]), len(store.state["learned_rules"])
     rec["score"] = [int(hg), int(ag)]
     rec["edits"] = rec.get("edits", 0) + 1
     rec["edited_at"] = time.strftime("%Y-%m-%d %H:%M")
     n = rebuild_learning(store)
     store.save()
     return {"old": old, "new": {"score": rec["score"], "r": rec["pick_r"], "profit": rec["pick_profit"]},
-            "replayed": n, "weight_changes": _weight_diff(old_w, store.state["weights"]),
+            "replayed": n, "weight_changes": _weight_diff(old_w, store.state[weight_key(store)]),
             "rules_before": old_rules, "rules_after": len(store.state["learned_rules"])}
 
 
@@ -2290,13 +2417,13 @@ def revert_result(store, rid):
     rec = _find(store, rid)
     if rec is None or rec.get("status") != "settled":
         raise ValueError("ไม่พบรายการที่บันทึกผลแล้ว")
-    old_w, old_rules = dict(store.state["weights"]), len(store.state["learned_rules"])
+    old_w, old_rules = dict(store.state[weight_key(store)]), len(store.state["learned_rules"])
     rec["status"] = "pending"
     for k in ("score", "pick_r", "pick_profit", "role_r", "settle_seq", "settled_at"):
         rec.pop(k, None)
     n = rebuild_learning(store)
     store.save()
-    return {"replayed": n, "weight_changes": _weight_diff(old_w, store.state["weights"]),
+    return {"replayed": n, "weight_changes": _weight_diff(old_w, store.state[weight_key(store)]),
             "rules_before": old_rules, "rules_after": len(store.state["learned_rules"])}
 
 
