@@ -756,7 +756,10 @@ with tab5:
         c1, c2 = st.columns(2)
         if c1.button("☁️ ซิงก์ขึ้นคลาวด์ตอนนี้"):
             store.save()
-            (st.success("ซิงก์สำเร็จ") if rs.get("ok") else st.error(rs.get("error")))
+            if rs.get("ok"):
+                st.success("ซิงก์สำเร็จ")
+            else:
+                st.error(rs.get("error"))
         if c2.button("⬇ ดึงข้อมูลจากคลาวด์"):
             if store.pull_remote():
                 st.success("ดึงข้อมูลสำเร็จ")
