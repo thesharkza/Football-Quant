@@ -127,6 +127,17 @@ CSS = """
 .fq-hist:last-child { border-bottom:none; } .fq-hist small { color:var(--mut); display:block; }
 .fq-empty { padding:22px; text-align:center; color:var(--mut); border:1px dashed var(--line); border-radius:14px; }
 
+/* ข้อมูลทีม */
+.fq-tn { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px 18px; }
+.fq-tn h4 { margin:0 0 6px; font-size:.86rem; font-weight:700; }
+.fq-tn .it { font-size:.82rem; line-height:1.5; margin:3px 0; }
+.fq-tn .src { color:var(--mut); font-size:.7rem; margin-left:4px; }
+.fq-tn .na { color:#64748b; font-style:italic; }
+.fq-tn .strike { color:#fca5a5; text-decoration:line-through; opacity:.75; }
+.fq-tn a, .fq-srcs a { color:#5eead4; text-decoration:none; } .fq-srcs a:hover { text-decoration:underline; }
+.fq-tn .xg { display:flex; gap:14px; flex-wrap:wrap; } .fq-tn .xg b { font-size:1.05rem; }
+@media (max-width: 820px) { .fq-tn { grid-template-columns:1fr; } }
+
 @media (max-width: 820px) {
   .fq-grid > * { grid-column:span 12 !important; }
   .fq-grid > .fq-m6 { grid-column:span 6 !important; }
@@ -371,7 +382,108 @@ def analysis_body(res):
     out.append(_card("บริบทแมตช์", cbody, "fq-c6", tag))
     out.append(_card("Home/Away Verification", vb or '<div class="fq-mut">ไม่มีข้อมูลการตรวจ</div>', "fq-c6"))
     out.append('</div></div>')
-    return "".join(out)
+    return "".join(out) + team_news_section(m, f)
+
+
+# ------------------------------------------------------------------ ข้อมูลทีม (xG, ตัวเจ็บ, บอลถ้วย, วันพัก)
+_NA = '<span class="na">ไม่มีข้อมูล</span>'
+
+
+def _src(d, as_of=None):
+    t = " · ".join(x for x in (d, as_of) if x)
+    return f'<span class="src">[{e(t)}]</span>' if t else ""
+
+
+def _flag(st, why):
+    if st == "ok":
+        return ""
+    lb = {"unverified": "ไม่ยืนยันแหล่ง", "stale": "ข้อมูลเก่า", "invalid": "ค่าผิดปกติ"}.get(st, st)
+    return " " + _chip(f"{lb} · ไม่นำไปใช้", "warn") + (f' <span class="src">{e(why)}</span>' if why else "")
+
+
+def team_news_section(m, f):
+    tn = m.get("team_news")
+    if not tn:
+        return ""
+    head = ('<div class="fq-sec">ข้อมูลทีม <small>ค้นจาก Google · ไม่มีข้อมูล = แสดงว่าไม่มี (ไม่เดา) · '
+            'ยังไม่มีผลต่อการฟันธง (Rule R42–R46 อยู่ในสถานะเงา)</small></div>')
+    if tn.get("error"):
+        return '<div class="fq">' + head + _card("ข้อมูลทีม", f'<div class="fq-mut">ค้นข้อมูลทีมไม่สำเร็จ: {e(tn["error"])}</div>', "fq-c12") + "</div>"
+    INJ = {"out": ("ไม่ได้ลง", "bad"), "doubtful": ("ไม่แน่", "warn"), "suspended": ("โดนแบน", "bad")}
+    ROLE = {"starter": "ตัวจริง", "rotation": "สำรอง", "unknown": "ไม่ทราบบทบาท"}
+    cols = []
+    for side in ("home", "away"):
+        name = f[side]
+        h = [f"<h4>{e(name)} <span class='fq-mut fq-small'>{'เจ้าบ้าน' if side == 'home' else 'ทีมเยือน'}</span></h4>"]
+        x = (tn.get("xg") or {}).get(side) or {}
+        if x.get("status", "none") == "none" or "xg" not in x:
+            h.append(f'<div class="it">xG / xGA: ' + (_NA if x.get("status", "none") == "none" else '<span class="na">ไม่มีข้อมูลที่ยืนยันได้</span>') + "</div>")
+        else:
+            cls = "" if x["status"] == "ok" else "strike"
+            gfga = (f' · ได้/เสียจริง <b>{x["gf"]:.2f}</b>/<b>{x["ga"]:.2f}</b>' if x.get("gf") is not None and x.get("ga") is not None else "")
+            h.append(f'<div class="it"><span class="{cls}">xG <b>{x["xg"]:.2f}</b> · xGA <b>{x["xga"]:.2f}</b>{gfga}</span>'
+                     f' <span class="fq-mut fq-small">({x.get("games") or "?"} นัดล่าสุด)</span>{_src(x.get("source"), x.get("as_of"))}{_flag(x["status"], x.get("why"))}</div>')
+        lst = (tn.get("injuries") or {}).get(side) or []
+        if not lst:
+            h.append(f'<div class="it">ตัวเจ็บ/แบน: ' + ('<span class="fq-up">ไม่พบรายงาน</span>' if (tn.get("injuries_checked") or {}).get(side) else _NA) + "</div>")
+        else:
+            h.append('<div class="it">ตัวเจ็บ/แบน:</div>')
+            for p in lst:
+                lb, k = INJ.get(p.get("status"), ("?", "off"))
+                star = "★ " if p.get("role") == "starter" else ""
+                cls = "" if p.get("st") == "ok" else "strike"
+                h.append(f'<div class="it" style="padding-left:10px"><span class="{cls}">{star}{e(p["player"])}</span> '
+                         f'<span class="fq-mut fq-small">{e(p.get("position"))} · {ROLE.get(p.get("role"), "")}</span> {_chip(lb, k)}'
+                         f'{_src(p.get("source"), p.get("as_of"))}{_flag(p.get("st"), p.get("why"))}</div>')
+        r = (tn.get("rest") or {}).get(side) or {}
+        if r.get("days") is None:
+            h.append(f'<div class="it">วันพัก: {_NA}</div>')
+        else:
+            warn = " fq-warn" if r["days"] <= 3 else ""
+            h.append(f'<div class="it">วันพัก: <b class="{warn}">{r["days"]} วัน</b> <span class="fq-mut fq-small">นัดก่อน {e(r["last_date"])}'
+                     f'{" · " + e(r["competition"]) if r.get("competition") else ""}</span>{_src(r.get("source"))}{_flag(r["status"], None)}</div>')
+        if ((tn.get("cup") or {}).get("rotation") or {}).get(side):
+            h.append('<div class="it">' + _chip("มีข่าวหมุนเวียน/พักตัวหลัก", "warn") + "</div>")
+        cols.append('<div>' + "".join(h) + "</div>")
+    body = f'<div class="fq-tn">{"".join(cols)}</div>'
+    extra = []
+    c = tn.get("cup") or {}
+    if c.get("is_cup"):
+        extra.append(_chip("บอลถ้วย" + (f" เลก {c['leg']}" if c.get("leg") else "") + (f" · เลกแรก {c['first_leg_score']}" if c.get("first_leg_score") else ""), "acc"))
+    lu = tn.get("lineups") or {}
+    extra.append(_chip("ประกาศตัวจริงแล้ว", "ok") if lu.get("confirmed") else _chip("ตัวจริง: ยังไม่ประกาศ / ไม่มีข้อมูล", "off"))
+    if tn.get("match_date"):
+        extra.append(_chip(f"วันแข่ง {tn['match_date']}", "off"))
+    body += f'<div class="fq-chips" style="margin-top:10px">{"".join(extra)}</div>'
+    if c.get("evidence") and any((c.get("rotation") or {}).values()):
+        body += f'<div class="fq-small fq-mut" style="margin-top:6px">หลักฐานบอลถ้วย: {e(c["evidence"])}{_src(c.get("source"))}</div>'
+    if lu.get("confirmed") and lu.get("notes"):
+        body += f'<div class="fq-small" style="margin-top:6px">ตัวจริง: {e(lu["notes"])}</div>'
+    news = tn.get("other_news") or []
+    if news:
+        body += '<ul class="fq-ev">' + "".join(
+            f'<li><span class="{"" if n.get("st") == "ok" else "strike"}">{e(n["text"])}</span> {_src(n.get("source"), n.get("as_of"))}{_flag(n.get("st"), n.get("why"))}</li>' for n in news) + "</ul>"
+    miss = tn.get("missing") or []
+    probs = tn.get("problems") or []
+    if miss or probs:
+        body += ('<div class="fq-small" style="margin-top:10px"><b class="fq-warn">ไม่มีข้อมูล / ไม่นำไปใช้</b><ul class="fq-ev">'
+                 + "".join(f"<li>{e(x)}</li>" for x in probs + miss) + "</ul></div>")
+    # สรุปค่าที่ Rule เงาใช้
+    used = []
+    if f.get("tn_xg_total") is not None:
+        used.append(f"xG รวมคาดการณ์ {f['tn_xg_total']:.2f}" + (f" vs เรต {f['ou_c']:g}" if f.get("has_ou") else ""))
+    if f.get("tn_fav_overperf") is not None:
+        used.append(f"ทีมต่อ ผลจริง−xG {f['tn_fav_overperf']:+.2f}/นัด")
+    if f.get("tn_fav_starters_out") is not None and f.get("tn_dog_starters_out") is not None:
+        used.append(f"ตัวจริงหาย ต่อ {f['tn_fav_starters_out']} / รอง {f['tn_dog_starters_out']}")
+    tag = _chip(f"แหล่งยืนยัน {len(tn.get('grounded') or [])} เว็บ", "ok" if tn.get("grounded") else "bad")
+    if used:
+        body += '<div class="fq-small fq-mut" style="margin-top:8px">ค่าที่ยืนยันแล้วและส่งให้ Rule เงา: ' + e(" · ".join(used)) + "</div>"
+    srcs = [s_ for s_ in (tn.get("sources") or []) if s_.get("uri")][:8]
+    if srcs:
+        body += ('<div class="fq-small fq-mut fq-srcs" style="margin-top:6px">แหล่งที่ค้นเจอ: '
+                 + " · ".join(f'<a href="{e(s_["uri"])}" target="_blank" rel="noopener">{e(s_.get("title") or "ลิงก์")}</a>' for s_ in srcs) + "</div>")
+    return '<div class="fq">' + head + '<div class="fq-grid">' + _card("ข้อมูลทีม", body, "fq-c12", tag) + "</div></div>"
 
 
 # ------------------------------------------------------------------ รายงาน HTML แบบไฟล์เดี่ยว (ดาวน์โหลด)
@@ -624,7 +736,7 @@ def rule_lifecycle(state, params):
         body += (f'<div class="fq-row" style="grid-template-columns:.7fr 2.4fr .9fr 1.4fr"><b>{e_(rid)}</b>'
                  f'<div class="rn"><b>{e_(desc)}</b><small>{e_(e.get("reason", ""))}</small></div>'
                  f'<span>{_chip(t, kd)}</span><span class="fq-small">{prog}</span></div>')
-    rules = (f'<div class="fq-small fq-mut" style="margin-bottom:8px">ทุก Rule ใหม่ (ที่ระบบสร้าง และ R28–R40 จากเอกสาร) เริ่มเป็น <b>เงา</b>: '
+    rules = (f'<div class="fq-small fq-mut" style="margin-bottom:8px">ทุก Rule ใหม่ (ที่ระบบสร้าง และ R28–R40 จากเอกสาร และ R42–R46 จากข้อมูลทีม) เริ่มเป็น <b>เงา</b>: '
              f'ติดตามผลเบื้องหลังโดยไม่มีผลต่อการฟันธง · <b>ปลดล็อค</b> เมื่อชนะ ≥ {params["unlock_wr"]:.0%} จาก ≥ {params["unlock_min_n"]} ครั้ง '
              f'(และสูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ) หรือครบ {params["judge_n"]} ครั้งแล้วผ่านเกณฑ์ · <b>ถอด</b> เมื่อครบ {params["judge_n"]} ครั้งไม่ผ่าน, '
              f'ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ หรืออัตราชนะลดลงต่อเนื่อง 3 ช่วง</div>')
