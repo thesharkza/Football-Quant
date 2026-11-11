@@ -384,6 +384,8 @@ def run_pipeline(files, opts, do_research, save, box):
                     q.apply_team_news(m, r2, srcs2, qs2)
                 except SystemExit as e:
                     m["team_news"] = {"error": str(e.code)}
+                except AttributeError:
+                    m["team_news"] = {"error": "ไฟล์ football_quant_v58.py บน GitHub ยังเป็นรุ่นเก่า — อัปโหลดไฟล์รุ่นล่าสุดแล้วรีบูตแอป"}
                 except Exception as e:  # noqa  (ข้อมูลทีมเป็นส่วนเสริม ห้ามทำให้การวิเคราะห์ล้ม)
                     m["team_news"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
             st.write("🧪 กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
