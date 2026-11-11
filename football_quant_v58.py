@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime as _dt_mod
 import itertools
 import json
 import math
@@ -141,6 +142,11 @@ RULE_NAMES = {
     "R38": "Shallow Handicap Draw Vulnerability Filter",
     "R39": "Home Defensive Meltdown & Collapse Shield (รวม Rule 41)",
     "R40": "Elite Away Giant Slump & Pressured Trap Filter",
+    "R42": "xG Total vs OU Line (ข้อมูลทีม)",
+    "R43": "Favorite xG Over/Under-performance Regression",
+    "R44": "Key Starters Missing (ตัวจริงหาย)",
+    "R45": "Rest Days Gap (พักน้อย/มาก)",
+    "R46": "Cup Rotation Risk (หมุนเวียนตัวหลัก)",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
 MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "X1"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
@@ -356,6 +362,7 @@ def build_features(m, P):
     f["verify"] = verify_home_away(m, f)
     f["verify_fail"] = any(not ok for ok, _ in f["verify"])
     f["tags"] = make_tags(f, P)
+    f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     return f
 
 
@@ -892,9 +899,52 @@ def exp40(f, P, c):
         return _exp([("HDP_HOME", 1.0)], ["HDP_AWAY"], "R40: ยักษ์เยือนฟอร์มสะดุด -> ห้ามถือหางทีมเยือน")
 
 
+def exp42(f, P, c):
+    t = f.get("tn_xg_total")
+    if t is not None and f.get("has_ou"):
+        d = t - f["ou_c"]
+        if abs(d) >= 0.5:
+            mk = "OU_OVER" if d > 0 else "OU_UNDER"
+            return _exp([(mk, 1.0)], [], f"R42: xG รวมคาดการณ์ {t:.2f} {'สูง' if d > 0 else 'ต่ำ'}กว่าเรต {f['ou_c']:g} ({d:+.2f}) -> {'สูง' if d > 0 else 'ต่ำ'}")
+
+
+def exp43(f, P, c):
+    o = f.get("tn_fav_overperf")
+    if o is not None and abs(o) >= 0.6:
+        if o > 0:
+            return _exp([(f["dog_hdp"], 1.0)], [], f"R43: ทีมต่อได้ผลดีกว่าเนื้อเกม (xG) {o:+.2f}/นัด -> เสี่ยงกลับสู่ค่าเฉลี่ย ถือรอง")
+        return _exp([(f["fav_hdp"], 1.0)], [], f"R43: ทีมต่อเล่นดีกว่าผลที่ได้ (xG) {o:+.2f}/นัด -> ผลน่าจะดีขึ้น ถือต่อ")
+
+
+def exp44(f, P, c):
+    a, b = f.get("tn_fav_starters_out"), f.get("tn_dog_starters_out")
+    if a is None or b is None:
+        return None
+    if a - b >= 2 or (f.get("tn_fav_gk_out") and a > b):
+        return _exp([(f["dog_hdp"], 1.0)], [], f"R44: ทีมต่อขาดตัวจริง {a} คน (ทีมรอง {b}){' รวมผู้รักษาประตู' if f.get('tn_fav_gk_out') else ''} -> ถือรอง")
+    if b - a >= 2:
+        return _exp([(f["fav_hdp"], 1.0)], [], f"R44: ทีมรองขาดตัวจริง {b} คน (ทีมต่อ {a}) -> ถือต่อ")
+
+
+def exp45(f, P, c):
+    a, b = f.get("tn_fav_rest"), f.get("tn_dog_rest")
+    if a is None or b is None:
+        return None
+    if a <= 3 and b >= 5:
+        return _exp([(f["dog_hdp"], 1.0)], [], f"R45: ทีมต่อพัก {a} วัน ทีมรองพัก {b} วัน -> ระวังทีมต่อล้า ถือรอง")
+    if b <= 3 and a >= 5:
+        return _exp([(f["fav_hdp"], 1.0)], [], f"R45: ทีมรองพัก {b} วัน ทีมต่อพัก {a} วัน -> ทีมต่อสดกว่า")
+
+
+def exp46(f, P, c):
+    if f.get("tn_fav_rotation") and not f.get("tn_dog_rotation"):
+        return _exp([(f["dog_hdp"], 1.0)], [], "R46: บอลถ้วย มีข่าวยืนยันว่าทีมต่อจะหมุนเวียน/พักตัวหลัก -> ถือรอง")
+
+
 # Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
 EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
-                "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40}
+                "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40,
+                "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
 
 
 def _wilson_lo(w, n, z):
@@ -1536,7 +1586,70 @@ def render_report(m, f, contribs, pick, store):
         L.append("  ⚠ Current Odds Priority: สัญญาณนี้มาจากการไหลของราคา (เทียบราคาเปิด) ล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน ระบบลดคะแนนเหลือ 60% แล้ว")
     if pick["tier"] == "ต่ำ":
         L.append("  ⚠ สัญญาณอ่อน: โปรแกรมบังคับฟันธงตาม Rule 13 แต่ควรลดสัดส่วนเงินเดิมพัน")
+    L += team_news_lines(m)
     return "\n".join(L)
+
+
+_ST_TH = {"ok": "", "unverified": "ไม่ยืนยันแหล่ง", "stale": "ข้อมูลเก่า", "invalid": "ค่าผิดปกติ"}
+INJ_TH = {"out": "ไม่ได้ลง", "doubtful": "ไม่แน่", "suspended": "โดนแบน"}
+ROLE_TH_TN = {"starter": "ตัวจริง", "rotation": "สำรอง", "unknown": "ไม่ทราบบทบาท"}
+
+
+def team_news_lines(m):
+    """ข้อความรายงานข้อมูลทีม: แสดงตรงตามที่ยืนยันได้ ไม่มี = เขียนว่าไม่มีข้อมูล"""
+    tn = m.get("team_news")
+    if not tn:
+        return []
+    L = ["\n🩺 ข้อมูลทีม (ประกอบการตัดสินใจ · ยังไม่มีผลต่อการฟันธง)"]
+    if tn.get("error"):
+        return L + [f"  ค้นข้อมูลทีมไม่สำเร็จ: {tn['error']}"]
+    names = {"home": m.get("home", "เจ้าบ้าน"), "away": m.get("away", "ทีมเยือน")}
+    for side in ("home", "away"):
+        x = (tn.get("xg") or {}).get(side) or {}
+        if x.get("status", "none") == "none":
+            L.append(f"  • xG {names[side]}: ไม่มีข้อมูล")
+        elif "xg" not in x:
+            L.append(f"  • xG {names[side]}: ไม่มีข้อมูลที่ยืนยันได้")
+        else:
+            flag = f"  ⚠ {x.get('why')} — ไม่นำไปใช้" if x["status"] != "ok" else ""
+            gfga = f" · ได้/เสียจริง {x['gf']:.2f}/{x['ga']:.2f}" if x.get("gf") is not None and x.get("ga") is not None else ""
+            L.append(f"  • xG {names[side]} ({x.get('games') or '?'} นัด): xG {x['xg']:.2f} / xGA {x['xga']:.2f}{gfga}"
+                     f"  [{x.get('source') or '-'} {x.get('as_of') or ''}]{flag}")
+    for side in ("home", "away"):
+        lst = (tn.get("injuries") or {}).get(side) or []
+        if not (tn.get("injuries_checked") or {}).get(side) and not lst:
+            L.append(f"  • ตัวเจ็บ/แบน {names[side]}: ไม่มีข้อมูล")
+        elif not lst:
+            L.append(f"  • ตัวเจ็บ/แบน {names[side]}: ไม่พบรายงาน")
+        else:
+            L.append(f"  • ตัวเจ็บ/แบน {names[side]}:")
+            for p in lst:
+                flag = f"  ⚠ {p.get('why')}" if p.get("st") != "ok" else ""
+                L.append(f"      - {p['player']} ({p.get('position')}, {ROLE_TH_TN.get(p.get('role'), '')}) "
+                         f"{INJ_TH.get(p.get('status'), '?')}  [{p.get('source') or '-'} {p.get('as_of') or ''}]{flag}")
+    for side in ("home", "away"):
+        r = (tn.get("rest") or {}).get(side) or {}
+        if r.get("status", "none") == "none" or r.get("days") is None:
+            L.append(f"  • วันพัก {names[side]}: ไม่มีข้อมูล")
+        else:
+            flag = "  ⚠ ไม่ยืนยันแหล่ง" if r["status"] != "ok" else ""
+            L.append(f"  • วันพัก {names[side]}: {r['days']} วัน (นัดก่อน {r['last_date']} {r.get('competition') or ''}){flag}")
+    c = tn.get("cup") or {}
+    if c.get("is_cup"):
+        leg = f" เลก {c['leg']}" if c.get("leg") else ""
+        fl = f" (เลกแรก {c['first_leg_score']})" if c.get("first_leg_score") else ""
+        L.append(f"  • บอลถ้วย{leg}{fl}")
+        for side in ("home", "away"):
+            if c.get("rotation", {}).get(side):
+                L.append(f"      - ⚠ {names[side]} มีข่าวหมุนเวียน/พักตัวหลัก [{c.get('source')}]")
+    lu = tn.get("lineups") or {}
+    L.append("  • ตัวจริง: " + ("ประกาศแล้ว" + (f" — {lu['notes']}" if lu.get("notes") else "") if lu.get("confirmed") else "ยังไม่ประกาศ / ไม่มีข้อมูล"))
+    for n in tn.get("other_news") or []:
+        flag = f"  ⚠ {n.get('why')}" if n.get("st") != "ok" else ""
+        L.append(f"  • ข่าว: {n['text']}  [{n.get('source') or '-'}]{flag}")
+    for p in tn.get("problems") or []:
+        L.append(f"  ⚠ {p}")
+    return L
 
 
 # ----------------------------------------------------------------------------
@@ -2202,6 +2315,309 @@ def apply_research(m, r, sources=None, queries=None):
     return m
 
 
+# ----------------------------------------------------------------------------
+# ข้อมูลทีม (xG/xGA, ตัวเจ็บ/โดนแบน, บอลถ้วย, วันพัก, ตัวจริง) — นโยบาย "ไม่มีให้บอกว่าไม่มี ห้ามมโน"
+#   ชั้นที่ 1 (คำสั่ง Gemini): ทุกค่าต้องมีแหล่ง + วันที่ ไม่พบให้ null และระบุในรายการ missing
+#   ชั้นที่ 2 (โค้ดตรวจซ้ำ): แหล่งต้องตรงกับผลค้นหาจริงของ Google (grounding) ช่วงค่าต้องสมเหตุสมผล ข้อมูลต้องไม่เก่า
+#   ค่าที่ไม่ผ่าน = แสดงว่า "ไม่มีข้อมูล"/"ไม่ยืนยัน" และไม่ถูกนำไปคำนวณ
+#   Rule ที่ใช้ข้อมูลนี้ (R42-R46) เริ่มเป็นเงาเสมอ ไม่เปลี่ยนการฟันธงจนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
+# ----------------------------------------------------------------------------
+TEAM_NEWS_PROMPT = """คุณคือผู้ช่วยค้นข้อมูลฟุตบอล ใช้ Google Search ค้นข้อมูลก่อนแข่งของคู่นี้:
+เจ้าบ้าน: @HOME@
+ทีมเยือน: @AWAY@
+รายการแข่งขัน: @LEAGUE@
+วันนี้: @TODAY@
+
+กฎเหล็ก (สำคัญที่สุด ห้ามฝ่าฝืน):
+- ห้ามเดา ห้ามประมาณ ห้ามคำนวณเอง ห้ามแต่งตัวเลขหรือชื่อนักเตะขึ้นมาเด็ดขาด
+- ทุกค่าต้องมาจากหน้าเว็บที่คุณค้นเจอจริงในการค้นครั้งนี้ และต้องใส่ "source" เป็นชื่อโดเมนของเว็บนั้น (เช่น fbref.com) และ "as_of" เป็นวันที่ของข้อมูล/ข่าว (YYYY-MM-DD)
+- ถ้าค้นไม่เจอ ไม่ชัวร์ หรือข้อมูลขัดกันเอง ให้ใส่ null แล้วเขียนเหตุผลสั้นๆ ในรายการ "missing" เช่น "ไม่พบ xG ของ @AWAY@"
+- การตอบว่า "ไม่มีข้อมูล" ถือว่าถูกต้องและดีกว่าการให้ข้อมูลที่ไม่แน่ใจเสมอ
+
+สิ่งที่ต้องค้น:
+1. match_date = วันแข่งของนัดนี้ (YYYY-MM-DD) ถ้าไม่พบ null
+2. xg (แยก home/away) = ค่าเฉลี่ยต่อนัดจาก "5 นัดล่าสุด" (ระบุจำนวนนัดที่ใช้จริงใน games)
+   xg = expected goals ที่ทีมสร้างได้ต่อนัด, xga = expected goals ที่เสียต่อนัด, gf/ga = ประตูจริงได้/เสียต่อนัด ในนัดชุดเดียวกัน
+   ใช้เฉพาะเว็บที่เผยแพร่ค่า xG จริง (เช่น fbref, understat, fotmob, sofascore, footystats, americansocceranalysis)
+   ห้ามแปลงจากจำนวนการยิงเอง ถ้าลีกนี้ไม่มี xG ให้ null ทั้งก้อน
+3. injuries (แยก home/away) = นักเตะที่ "เจ็บ/ไม่แน่ว่าจะได้ลง/โดนแบน" สำหรับนัดนี้ จากข่าวไม่เกิน 7 วัน
+   status: out | doubtful | suspended
+   role: starter ถ้าแหล่งข้อมูลระบุหรือแสดงว่าเป็นตัวจริงประจำ (เช่น ลงตัวจริงส่วนใหญ่ของฤดูกาล) ; rotation ถ้าเป็นตัวสำรอง/หมุนเวียน ; unknown ถ้าไม่มีหลักฐาน (ห้ามเดา)
+   position: GK | DF | MF | FW | unknown
+   injuries_checked.home/away = true เฉพาะเมื่อพบรายงานข่าวทีมก่อนเกมของนัดนี้จริง (แม้จะไม่มีตัวเจ็บเลย) ไม่เช่นนั้น false
+4. cup = ข้อมูลถ้าเป็นบอลถ้วย: is_cup, leg (1/2/null), first_leg_score (เช่น "2-1" มุมมองเจ้าบ้านนัดนี้ หรือ null)
+   rotation_risk.home/away = true เฉพาะเมื่อมีข่าว/คำให้สัมภาษณ์โค้ชว่าจะหมุนเวียนหรือพักตัวหลัก ไม่เช่นนั้น false ; rotation_evidence = ข้อความสั้นพร้อมแหล่ง
+5. last_match (แยก home/away) = วันที่ของนัดล่าสุดที่ทีมลงแข่งก่อนนัดนี้ (ทุกรายการ) {"date","competition","source"}
+6. lineups = confirmed true เฉพาะเมื่อมีการประกาศรายชื่อตัวจริงอย่างเป็นทางการแล้วเท่านั้น ; notes = ตัวหลักที่ไม่อยู่ในตัวจริง (ถ้ามี)
+7. other_news = ข่าวสำคัญอื่นที่อาจมีผลต่อเกม (เปลี่ยนโค้ช, ปัญหาในทีม, สภาพอากาศรุนแรง) ไม่เกิน 4 ข้อ ทุกข้อต้องมี source และ as_of
+
+ตอบเป็น JSON ล้วน ไม่มีข้อความอื่น ไม่มี markdown ตามโครงสร้างนี้:
+{"match_date":null,
+ "xg":{"home":{"games":5,"xg":null,"xga":null,"gf":null,"ga":null,"source":null,"as_of":null},
+       "away":{"games":5,"xg":null,"xga":null,"gf":null,"ga":null,"source":null,"as_of":null}},
+ "injuries":{"home":[{"player":"...","status":"out","role":"unknown","position":"unknown","source":"...","as_of":"..."}],"away":[]},
+ "injuries_checked":{"home":false,"away":false},
+ "cup":{"is_cup":false,"leg":null,"first_leg_score":null,"rotation_risk":{"home":false,"away":false},"rotation_evidence":null,"source":null},
+ "last_match":{"home":null,"away":null},
+ "lineups":{"confirmed":false,"source":null,"notes":null},
+ "other_news":[],
+ "missing":["..."]}"""
+
+TN_MAX_AGE = {"xg": 30, "injury": 10, "news": 14}       # อายุข้อมูลสูงสุด (วัน) ที่ยังนำไปใช้
+
+
+def research_team_news(home, away, league, model, api_key, today=None):
+    """ค้นข้อมูลทีมด้วย Gemini + Google Search คืน (ผลดิบ, แหล่งข้อมูลจริงจาก grounding, คำค้น)"""
+    if not str(model).lower().startswith("gemini"):
+        sys.exit(f"รองรับเฉพาะโมเดล Gemini (ได้รับ '{model}')")
+    prompt = (TEAM_NEWS_PROMPT.replace("@HOME@", str(home)).replace("@AWAY@", str(away))
+              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or time.strftime("%Y-%m-%d")))
+    data = _post_json(GEMINI_URL.format(model=model),
+                      {"content-type": "application/json", "x-goog-api-key": api_key},
+                      {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                       "tools": [{"google_search": {}}],
+                       "generationConfig": {"maxOutputTokens": 6144, "temperature": 0}})
+    cands = data.get("candidates") or []
+    if not cands:
+        sys.exit("Gemini ไม่ส่งผลการค้นข้อมูลทีมกลับมา")
+    cand = cands[0]
+    text = "".join(pt.get("text", "") for pt in cand.get("content", {}).get("parts", []) if not pt.get("thought"))
+    gm = cand.get("groundingMetadata") or {}
+    sources, seen = [], set()
+    for ch in gm.get("groundingChunks") or []:
+        web = ch.get("web") or {}
+        key = web.get("title") or web.get("uri")
+        if key and key not in seen:
+            seen.add(key)
+            sources.append({"title": web.get("title") or "", "uri": web.get("uri") or ""})
+    return parse_json_reply(text), sources, list(gm.get("webSearchQueries") or [])
+
+
+def _domain(s):
+    s = str(s or "").strip().lower()
+    s = re.sub(r"^[a-z]+://", "", s).split("/")[0].split("?")[0]
+    s = re.sub(r"^(www|m|en|th)\.", "", s)
+    return s if "." in s else ""
+
+
+def _src_check(src, grounded):
+    """แหล่งที่ AI อ้าง ต้องอยู่ในผลค้นหาจริงของ Google ครั้งนี้ -> (โดเมน, ยืนยันได้หรือไม่)"""
+    d = _domain(src)
+    if not d:
+        return None, False
+    return d, any(d == g or d.endswith("." + g) or g.endswith("." + d) for g in grounded)
+
+
+def _date(s):
+    try:
+        return _dt_mod.date.fromisoformat(str(s)[:10])
+    except Exception:  # noqa
+        return None
+
+
+def _age_days(as_of, ref):
+    d = _date(as_of)
+    return None if d is None or ref is None else (ref - d).days
+
+
+def validate_team_news(raw, sources, queries=None, today=None, home=None, away=None):
+    """ตรวจผลค้นข้อมูลทีมทุกค่า: มีแหล่ง + แหล่งตรงกับผลค้นหาจริง + ช่วงค่าสมเหตุสมผล + ไม่เก่าเกิน
+    คืน dict ที่ทุกรายการมี status: ok | unverified | stale | invalid | none  (ใช้คำนวณได้เฉพาะ ok)"""
+    ref = _date(today) or _dt_mod.date.today()
+    grounded = set()
+    for s_ in sources or []:
+        for txt in (s_.get("title"), s_.get("uri")):
+            for mt in re.findall(r"[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+", str(txt or "").lower()):
+                d_ = _domain(mt)
+                if d_ and "vertexaisearch" not in d_ and "googleapis" not in d_:
+                    grounded.add(d_)
+    r = raw if isinstance(raw, dict) else {}
+    out = {"searched_at": ref.isoformat(), "grounded": sorted(grounded), "sources": (sources or [])[:12],
+           "queries": (queries or [])[:8], "missing": [], "problems": []}
+    if not grounded:
+        out["problems"].append("Gemini ไม่ได้ค้นเว็บจริงในครั้งนี้ (ไม่มีแหล่งอ้างอิง) — ไม่นำข้อมูลทีมใดๆ ไปใช้")
+    names = {"home": home or "เจ้าบ้าน", "away": away or "ทีมเยือน"}
+
+    def stamp(item, kind):
+        d, ok = _src_check(item.get("source"), grounded)
+        age = _age_days(item.get("as_of"), ref)
+        if not d:
+            return "unverified", "ไม่ระบุแหล่งข้อมูล", d, age
+        if not ok:
+            return "unverified", f"แหล่ง {d} ไม่อยู่ในผลค้นหาจริง", d, age
+        if age is None:
+            return "unverified", "ไม่ระบุวันที่ของข้อมูล", d, age
+        if age < -2:
+            return "invalid", "วันที่ของข้อมูลอยู่ในอนาคต", d, age
+        if age > TN_MAX_AGE[kind]:
+            return "stale", f"ข้อมูลเก่า {age} วัน (เกิน {TN_MAX_AGE[kind]} วัน)", d, age
+        return "ok", None, d, age
+
+    # วันแข่ง
+    md = _date(r.get("match_date") if not isinstance(r.get("match_date"), dict) else r["match_date"].get("value"))
+    out["match_date"] = md.isoformat() if md and -3 <= (md - ref).days <= 14 else None
+
+    # xG / xGA
+    out["xg"] = {}
+    xg = r.get("xg") if isinstance(r.get("xg"), dict) else {}
+    for side in ("home", "away"):
+        it = xg.get(side) if isinstance(xg.get(side), dict) else None
+        vals = {k: it.get(k) for k in ("xg", "xga", "gf", "ga")} if it else {}
+        if not it or not _num(vals.get("xg")) or not _num(vals.get("xga")):
+            out["xg"][side] = {"status": "none"}
+            out["missing"].append(f"ไม่มีข้อมูล xG/xGA ของ {names[side]}")
+            continue
+        st_, why, d, age = stamp(it, "xg")
+        games = it.get("games") if _num(it.get("games")) else None
+        if not all(0.05 <= vals[k] <= 4.5 for k in ("xg", "xga")) or (games is not None and not 1 <= games <= 10):
+            st_, why = "invalid", "ค่าไม่สมเหตุสมผล (ไม่ใช่ค่าเฉลี่ยต่อนัด)"
+        for k in ("gf", "ga"):
+            if not (_num(vals.get(k)) and 0 <= vals[k] <= 6):
+                vals[k] = None
+        out["xg"][side] = {**{k: (round(float(v), 2) if v is not None else None) for k, v in vals.items()},
+                           "games": int(games) if games else None, "source": d, "as_of": it.get("as_of"),
+                           "status": st_, "why": why}
+
+    # ตัวเจ็บ/โดนแบน
+    out["injuries"], out["injuries_checked"] = {}, {}
+    inj = r.get("injuries") if isinstance(r.get("injuries"), dict) else {}
+    chk = r.get("injuries_checked") if isinstance(r.get("injuries_checked"), dict) else {}
+    for side in ("home", "away"):
+        lst = []
+        for it in (inj.get(side) or [])[:15] if isinstance(inj.get(side), list) else []:
+            if not isinstance(it, dict) or not str(it.get("player") or "").strip():
+                continue
+            st_, why, d, age = stamp(it, "injury")
+            status = it.get("status") if it.get("status") in ("out", "doubtful", "suspended") else None
+            if status is None:
+                st_, why = "invalid", "ไม่ระบุสถานะ"
+            lst.append({"player": str(it["player"]).strip()[:40], "status": status,
+                        "role": it.get("role") if it.get("role") in ("starter", "rotation") else "unknown",
+                        "position": it.get("position") if it.get("position") in ("GK", "DF", "MF", "FW") else "unknown",
+                        "source": d, "as_of": it.get("as_of"), "st": st_, "why": why})
+        out["injuries"][side] = lst
+        checked = chk.get(side) is True and bool(grounded)
+        out["injuries_checked"][side] = checked or any(x["st"] == "ok" for x in lst)
+        if not out["injuries_checked"][side]:
+            out["missing"].append(f"ไม่มีรายงานข่าวทีม/ตัวเจ็บของ {names[side]}")
+
+    # บอลถ้วย
+    cup = r.get("cup") if isinstance(r.get("cup"), dict) else {}
+    rr = cup.get("rotation_risk") if isinstance(cup.get("rotation_risk"), dict) else {}
+    d, ok = _src_check(cup.get("source"), grounded)
+    fls = cup.get("first_leg_score")
+    out["cup"] = {"is_cup": cup.get("is_cup") is True, "leg": cup.get("leg") if cup.get("leg") in (1, 2) else None,
+                  "first_leg_score": fls if isinstance(fls, str) and re.match(r"^\d{1,2}-\d{1,2}$", fls.strip()) else None,
+                  "rotation": {s: rr.get(s) is True and ok for s in ("home", "away")},
+                  "rotation_claimed": {s: rr.get(s) is True for s in ("home", "away")},
+                  "evidence": str(cup.get("rotation_evidence"))[:200] if cup.get("rotation_evidence") else None,
+                  "source": d, "verified": ok}
+    if any(out["cup"]["rotation_claimed"].values()) and not ok:
+        out["problems"].append("ข่าวหมุนเวียนผู้เล่นไม่มีแหล่งยืนยัน — ไม่นำไปใช้")
+
+    # วันพัก (โค้ดคำนวณเองจากวันที่ ไม่ให้ AI คำนวณ)
+    out["rest"] = {}
+    lm = r.get("last_match") if isinstance(r.get("last_match"), dict) else {}
+    kick = _date(out["match_date"]) or ref
+    for side in ("home", "away"):
+        it = lm.get(side) if isinstance(lm.get(side), dict) else None
+        ld = _date(it.get("date")) if it else None
+        if not ld:
+            out["rest"][side] = {"status": "none"}
+            out["missing"].append(f"ไม่มีข้อมูลนัดล่าสุดของ {names[side]}")
+            continue
+        d, ok = _src_check(it.get("source"), grounded)
+        days = (kick - ld).days
+        st_ = "ok" if ok and 1 <= days <= 60 else ("invalid" if not 1 <= days <= 60 else "unverified")
+        out["rest"][side] = {"days": days if 1 <= days <= 60 else None, "last_date": ld.isoformat(),
+                             "competition": str(it.get("competition") or "")[:40] or None, "source": d, "status": st_}
+
+    # ตัวจริง
+    lu = r.get("lineups") if isinstance(r.get("lineups"), dict) else {}
+    d, ok = _src_check(lu.get("source"), grounded)
+    out["lineups"] = {"confirmed": lu.get("confirmed") is True and ok, "claimed": lu.get("confirmed") is True,
+                      "source": d, "notes": str(lu.get("notes"))[:200] if lu.get("notes") else None}
+
+    # ข่าวอื่น
+    out["other_news"] = []
+    for it in (r.get("other_news") or [])[:4] if isinstance(r.get("other_news"), list) else []:
+        if isinstance(it, dict) and it.get("text"):
+            st_, why, d, age = stamp(it, "news")
+            out["other_news"].append({"text": str(it["text"])[:200], "source": d, "as_of": it.get("as_of"), "st": st_, "why": why})
+
+    for x in (r.get("missing") or [])[:10] if isinstance(r.get("missing"), list) else []:
+        if x and str(x) not in out["missing"]:
+            out["missing"].append(str(x)[:120])
+    return _strip_unverified(out, names)
+
+
+def _strip_unverified(out, names):
+    """ห้ามแสดงค่าที่ยืนยันแหล่งไม่ได้: ลบตัวเลข/ชื่อทิ้ง เหลือเพียงข้อความว่า 'ไม่มีข้อมูลที่ยืนยันได้' พร้อมเหตุผล"""
+    bad = ("unverified", "invalid")
+    for side in ("home", "away"):
+        x = out["xg"].get(side) or {}
+        if x.get("status") in bad:
+            out["xg"][side] = {"status": x["status"], "why": x.get("why")}
+            out["problems"].append(f"xG ของ {names[side]}: ไม่มีข้อมูลที่ยืนยันได้ ({x.get('why')}) — ไม่แสดงค่า")
+        lst = out["injuries"].get(side) or []
+        keep = [p for p in lst if p["st"] not in bad]
+        if len(keep) < len(lst):
+            out["problems"].append(f"ตัดรายชื่อตัวเจ็บของ {names[side]} ที่ยืนยันแหล่งไม่ได้ออก {len(lst) - len(keep)} รายการ")
+        out["injuries"][side] = keep
+        rs = out["rest"].get(side) or {}
+        if rs.get("status") in bad:
+            out["rest"][side] = {"status": rs["status"]}
+            out["problems"].append(f"วันพักของ {names[side]}: ไม่มีข้อมูลที่ยืนยันได้ — ไม่แสดงค่า")
+    n0 = len(out["other_news"])
+    out["other_news"] = [n for n in out["other_news"] if n["st"] not in bad]
+    if len(out["other_news"]) < n0:
+        out["problems"].append(f"ตัดข่าวที่ยืนยันแหล่งไม่ได้ออก {n0 - len(out['other_news'])} ข่าว")
+    lu = out["lineups"]
+    if lu.get("claimed") and not lu.get("confirmed"):
+        out["problems"].append("AI ระบุว่าประกาศตัวจริงแล้ว แต่ยืนยันแหล่งไม่ได้ — ถือว่ายังไม่มีข้อมูล")
+        lu["notes"] = None
+    if any(out["cup"]["rotation_claimed"].values()) and not out["cup"]["verified"]:
+        out["cup"]["evidence"] = None
+    return out
+
+
+def apply_team_news(m, raw, sources=None, queries=None, today=None):
+    m["team_news"] = validate_team_news(raw, sources, queries, today, m.get("home"), m.get("away"))
+    return m
+
+
+def team_news_features(m, f):
+    """แปลงข้อมูลทีม (เฉพาะค่าที่ยืนยันแล้ว status = ok) เป็น features สำหรับ Rule เงา R42-R46"""
+    tn = m.get("team_news") or {}
+    fav, dog = f["fav"], f["dog"]
+    out = {"tn_has": bool(tn), "tn_xg_total": None, "tn_fav_overperf": None, "tn_fav_starters_out": None,
+           "tn_dog_starters_out": None, "tn_fav_gk_out": False, "tn_fav_rest": None, "tn_dog_rest": None,
+           "tn_fav_rotation": False, "tn_dog_rotation": False, "tn_lineups": bool((tn.get("lineups") or {}).get("confirmed"))}
+    if not tn:
+        return out
+    xg = tn.get("xg") or {}
+    h, a = xg.get("home") or {}, xg.get("away") or {}
+    if h.get("status") == "ok" and a.get("status") == "ok":
+        out["tn_xg_total"] = round((h["xg"] + a["xga"]) / 2 + (a["xg"] + h["xga"]) / 2, 2)
+    fx = xg.get(fav) or {}
+    if fx.get("status") == "ok" and fx.get("gf") is not None and fx.get("ga") is not None:
+        out["tn_fav_overperf"] = round((fx["gf"] - fx["xg"]) + (fx["xga"] - fx["ga"]), 2)   # + = ผลจริงดีกว่าเนื้อเกม (เสี่ยงกลับสู่ค่าเฉลี่ย)
+    chk = tn.get("injuries_checked") or {}
+    for side, key in ((fav, "tn_fav_starters_out"), (dog, "tn_dog_starters_out")):
+        if chk.get(side):
+            lst = [x for x in (tn.get("injuries") or {}).get(side, []) if x.get("st") == "ok" and x.get("status") in ("out", "suspended")]
+            out[key] = sum(1 for x in lst if x.get("role") == "starter")
+            if side == fav:
+                out["tn_fav_gk_out"] = any(x.get("role") == "starter" and x.get("position") == "GK" for x in lst)
+    rs = tn.get("rest") or {}
+    for side, key in ((fav, "tn_fav_rest"), (dog, "tn_dog_rest")):
+        if (rs.get(side) or {}).get("status") == "ok":
+            out[key] = rs[side]["days"]
+    rot = (tn.get("cup") or {}).get("rotation") or {}
+    out["tn_fav_rotation"], out["tn_dog_rotation"] = bool(rot.get(fav)), bool(rot.get(dog))
+    return out
+
+
 def parse_json_reply(text):
     i, j = text.find("{"), text.rfind("}")
     if i < 0 or j < 0:
@@ -2319,6 +2735,12 @@ def cmd_images(a):
                 print(f"   - {e_}")
         except SystemExit as e_:
             print(f"   (ข้ามการค้นหาบริบท: {e_})")
+        print("🩺 ค้นข้อมูลทีม (xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก) ...")
+        try:
+            r2, srcs2, qs2 = research_team_news(m.get("home"), m.get("away"), m.get("league"), a.model, key)
+            apply_team_news(m, r2, srcs2, qs2)
+        except SystemExit as e_:
+            print(f"   (ข้ามการค้นข้อมูลทีม: {e_})")
     try:
         m, warns = validate_match(m)
     except ValueError as e:
