@@ -29,6 +29,8 @@ import football_quant_v58 as q
 import dashboard as d
 import backtest as bt
 import access
+import story as STORY
+import story_pages as SP
 
 DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 
@@ -133,7 +135,7 @@ ul.ev { margin:10px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; lin
 @media (max-width: 640px) { .pick .lb { font-size:1.4rem; } .grid3 { gap:6px; } .team .nm { font-size:1rem; } }
 </style>
 """
-CSS = CSS.replace("</style>", d.CSS + bt.CSS + "</style>")
+CSS = CSS.replace("</style>", d.CSS + bt.CSS + STORY.RUNTIME_CSS.replace(":host { display:block; }", "") + "</style>")
 if st.query_params.get("plain") != "1":      # ?plain=1 = ปิดการตกแต่ง CSS (ไว้ทดสอบ)
     st.markdown(CSS, unsafe_allow_html=True)
 
@@ -158,6 +160,15 @@ for _k in ("SHEETS_URL", "SHEETS_TOKEN", "GITHUB_TOKEN", "GIST_ID"):          # 
     _v = secret(_k)
     if _v:
         os.environ[_k] = _v
+
+
+def show(html_str, key, on_act=False):
+    """แสดงหน้าเรื่องเล่า (มีแอนิเมชัน/กราฟโต้ตอบ) · ถ้าเบราว์เซอร์/เวอร์ชันไม่รองรับ จะแสดงแบบนิ่งแทน"""
+    try:
+        return STORY.mount(html_str, key=key, on_act=on_act)
+    except Exception:  # noqa
+        st.markdown(html_str, unsafe_allow_html=True)
+        return None
 
 
 def cloud_warn():
@@ -428,32 +439,21 @@ def res_from_record(rec, store):
 
 
 # ---------------------------------------------------------------- แสดงผลลัพธ์
-def render_result(res, after_pick=None, key="r"):
+def render_result(res, key="r"):
     f = res["f"]
-    st.markdown(d.kpi_and_match(res), unsafe_allow_html=True)
-    st.caption("ระดับสัญญาณจัดจากคะแนนของ Rule (ต่ำ < 1.2 ≤ กลาง < 2.5 ≤ สูง) ไม่ใช่โอกาสชนะ · ข้อมูลที่มียังไม่พบว่าระดับสูงชนะมากกว่า")
-    if after_pick:
-        after_pick()
-    st.markdown(d.analysis_body(res), unsafe_allow_html=True)
-    if res.get("research_err"):
-        st.warning(f"ค้นหาบริบทอัตโนมัติไม่สำเร็จ (ใช้ค่าตั้งต้นแทน): {res['research_err']}")
-    rs = (res["m"].get("research") or {})
-    if rs.get("sources"):
-        with st.expander("แหล่งข้อมูลที่ Gemini ใช้ค้นหา"):
-            for s_ in rs["sources"]:
-                st.markdown(f"- [{s_['title'] or s_['uri']}]({s_['uri']})" if s_["uri"] else f"- {s_['title']}")
-    if res["warns"]:
-        with st.expander(f"คำเตือนจากการอ่านข้อมูล ({len(res['warns'])})"):
-            for w in res["warns"]:
-                st.write("• " + w)
-    with st.expander("รายงานฉบับเต็ม (ข้อความ)"):
-        st.text(res["report"])
-    st.download_button("⬇ ดาวน์โหลดรายงานแดชบอร์ด (HTML)", d.report_document(res),
-                       file_name=f"{q.slug(f['home'] + '-vs-' + f['away'])}.html", mime="text/html", key=f"dl_{key}")
     if res.get("saved"):
         mid, ok = res["saved"]
-        st.success("บันทึกสัญญาณแล้ว → ใส่ผลจริงที่แท็บ “บันทึกผล” หลังจบเกม" if ok
-                   else "ไม่บันทึก: รายการนี้ถูกบันทึกผลไปแล้ว")
+        if ok:
+            st.success("บันทึกสัญญาณแล้ว → ใส่ผลจริงที่แท็บ “บันทึกผล” หลังจบเกม")
+    show(SP.analysis_story(res), key=f"story_{key}")
+    st.download_button("⬇ ดาวน์โหลดรายงาน (HTML แบบเล่าเรื่อง เปิดได้ทุกเครื่อง)", SP.analysis_document(res),
+                       file_name=f"{q.slug(f['home'] + '-vs-' + f['away'])}.html", mime="text/html", key=f"dl_{key}")
+    with st.expander("รายงานฉบับเต็ม (ข้อความ)"):
+        st.text(res["report"])
+    if res.get("saved"):
+        mid, ok = res["saved"]
+        if not ok:
+            st.warning("ไม่บันทึก: รายการนี้ถูกบันทึกผลไปแล้ว")
         cloud_warn()
 
 
@@ -572,65 +572,45 @@ with tab1:
 # ================================================================ TAB 2
 with tab2:
     store = q.Store(DATA_DIR)
-    pend = {r["id"]: r for r in store.history if r["status"] == "pending"}
-    if not pend:
-        st.markdown('<div class="card"><div class="muted">ยังไม่มีสัญญาณที่รอผล — วิเคราะห์ในแท็บแรกโดยเปิด “บันทึกสัญญาณลงประวัติ”</div></div>',
-                    unsafe_allow_html=True)
-    else:
-        rid = st.selectbox("เลือกแมตช์ที่จบแล้ว", list(pend), label_visibility="collapsed",
-                           format_func=lambda i: f"{pend[i]['features']['home']} vs {pend[i]['features']['away']} — {pend[i]['pick']['label']}")
+    if ss.get("settle_html"):
+        show(ss.pop("settle_html"), key="settle_res")
+        cloud_warn()
+    pend_list = [r for r in reversed(store.history) if r["status"] == "pending"]
+    pend = {r["id"]: r for r in pend_list}
+    if ss.get("settle_sel") not in pend:
+        ss["settle_sel"] = pend_list[0]["id"] if pend_list else None
+    picked = show(SP.pending_cards(pend_list, ss["settle_sel"]), key="pend", on_act=True)
+    if picked and picked in pend and picked != ss["settle_sel"]:
+        ss["settle_sel"] = picked
+        st.rerun()
+    if pend:
+        rid = ss["settle_sel"]
         rec = pend[rid]
         fe = rec["features"]
-
-        def settle_ui():
-            c1, c2 = st.columns(2)
-            hg = c1.number_input(f"ประตู {fe['home']}", 0, 30, 0)
-            ag = c2.number_input(f"ประตู {fe['away']}", 0, 30, 0)
-            if st.button("✅ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
-                outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
-                cls = "win" if r > 0 else "lose" if r < 0 else "push"
-                skp = " (ไม้เงา — ข้ามไว้ ไม่นับเป็นไม้ที่เล่น)" if rec["pick"].get("skip") else ""
-                st.markdown(f'<div class="res {cls}">{esc(fe["home"])} {int(hg)}-{int(ag)} {esc(fe["away"])} · '
-                            f'{esc(rec["pick"]["label"])}{skp} → {q.result_word(r)} ({pf:+.2f} หน่วย)</div>', unsafe_allow_html=True)
-                card("ผลของแต่ละตลาด", "".join(
-                    f'<div class="row"><span class="l">{esc(market_th(k, fe))}</span><span class="r">{q.result_word(v[0])}</span></div>'
-                    for k, v in outcomes.items()))
-                if changes:
-                    card("ระบบปรับน้ำหนัก Rule", "".join(
-                        f'<div class="row"><span class="l">{esc(q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"))}</span>'
-                        f'<span class="r {"up" if n > o else "down" if n < o else "flat"}">{o:.2f} → {n:.2f}</span></div>'
-                        for k, (o, n, rr) in changes.items()))
-                cloud_warn()
-                for r_ in new:
-                    st.success(f"🧠 ระบบสร้าง Rule ใหม่ {r_['id']}: [{' + '.join(r_['tags'])}] → {q.ROLE_TH[r_['role']]} "
-                               f"(ชนะ {r_['wr']:.0%} จาก {r_['n']} นัด)")
-            with st.expander("🗑 ลบรายการนี้ (ถ้าไม่ต้องการ)"):
-                sure = st.checkbox("ยืนยันลบรายการที่เลือกอยู่", key=f"del_{rid}")
-                if st.button("ลบรายการนี้", disabled=not sure):
-                    q.delete_records(store, [rid])
-                    st.rerun()
-
-        render_result(res_from_record(rec, store), after_pick=settle_ui, key="t2")
+        st.markdown(f'<div class="fq"><div class="fq-sec">ใส่ผลจริง <small>{esc(fe["home"])} vs {esc(fe["away"])} · {esc(rec["pick"]["label"])}</small></div></div>',
+                    unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        hg = c1.number_input(f"ประตู {fe['home']}", 0, 30, 0, key=f"hg_{rid}")
+        ag = c2.number_input(f"ประตู {fe['away']}", 0, 30, 0, key=f"ag_{rid}")
+        if st.button("✅ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
+            outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
+            ss["settle_html"] = SP.settle_result(fe, rec["pick"], int(hg), int(ag), outcomes, r, pf, changes, new, rec.get("life_changes") or [])
+            ss.pop("settle_sel", None)
+            st.rerun()
+        with st.expander("🗑 ลบรายการนี้ (ถ้าไม่ต้องการ)"):
+            sure = st.checkbox("ยืนยันลบรายการที่เลือกอยู่", key=f"del_{rid}")
+            if st.button("ลบรายการนี้", disabled=not sure):
+                q.delete_records(store, [rid])
+                ss.pop("settle_sel", None)
+                st.rerun()
+        render_result(res_from_record(rec, store), key="t2")
 
     # ---------------- แก้ไข/ยกเลิกผลที่ใส่ผิด ----------------
     st.markdown('<div class="fq"><div class="fq-sec">แก้ไขผลที่ใส่ผิด <small>แก้สกอร์แล้วระบบคำนวณน้ำหนัก Rule และ Rule ที่เรียนรู้ใหม่จากประวัติทั้งหมด</small></div></div>',
                 unsafe_allow_html=True)
     em = ss.pop("edit_msg", None)
     if em:
-        if em["kind"] == "edit":
-            o, n = em["old"], em["new"]
-            cls = "win" if n["r"] > 0 else "lose" if n["r"] < 0 else "push"
-            st.markdown(f'<div class="res {cls}">แก้สกอร์ {esc(em["title"])}: {o["score"][0]}-{o["score"][1]} → {n["score"][0]}-{n["score"][1]} · '
-                        f'ผลสัญญาณ {q.result_word(o["r"])} ({o["profit"]:+.2f}) → {q.result_word(n["r"])} ({n["profit"]:+.2f})</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="res push">ยกเลิกผลของ {esc(em["title"])} แล้ว · กลับเป็น “รอผล” (บันทึกผลใหม่ได้ด้านบน)</div>', unsafe_allow_html=True)
-        wc = sorted(em["weight_changes"], key=lambda x: -abs((x[2] or 1.0) - (x[1] or 1.0)))[:8]
-        body = "".join(
-            f'<div class="row"><span class="l">{esc(k)} · {esc(q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"))}</span>'
-            f'<span class="r">{("-" if a is None else f"{a:.2f}")} → {("ถูกลบ" if b is None else f"{b:.2f}")}</span></div>' for k, a, b in wc)
-        body += (f'<div class="muted" style="margin-top:8px">คำนวณการเรียนรู้ใหม่จาก {em["replayed"]} นัด · '
-                 f'Rule ที่ระบบสร้างเอง {em["rules_before"]} → {em["rules_after"]}</div>')
-        card("ผลของการคำนวณการเรียนรู้ใหม่" + ("" if wc else " (น้ำหนัก Rule ไม่เปลี่ยน)"), body)
+        show(SP.edit_message(em), key="edit_msg")
         cloud_warn()
     done_recs = [r for r in reversed(store.history) if r["status"] == "settled"]
     if not done_recs:
@@ -641,10 +621,7 @@ with tab2:
                                                       + (" (เคยแก้ไข)" if r.get("edits") else "") for r in done_recs if r["id"] == i))
         er = next(r for r in done_recs if r["id"] == eid)
         fe = er["features"]
-        kind = "ok" if er["pick_r"] > 0 else "bad" if er["pick_r"] < 0 else "warn"
-        card("ผลที่บันทึกไว้", f'<div class="row"><span class="l">{esc(fe["home"])} {er["score"][0]}-{er["score"][1]} {esc(fe["away"])}</span>'
-             f'<span class="r">{esc(er["pick"]["label"])}</span></div>'
-             f'<div style="margin-top:8px">{chips_html([(f"{q.result_word(er['pick_r'])} · {er['pick_profit']:+.2f} หน่วย", kind)] + ([("แก้ไขแล้ว " + str(er["edits"]) + " ครั้ง", "")] if er.get("edits") else []))}</div>')
+        show(SP.record_card(er), key="rec_card")
         c1, c2 = st.columns(2)
         ehg = c1.number_input(f"ประตู {fe['home']} (ที่ถูกต้อง)", 0, 30, int(er["score"][0]), key=f"ed_hg_{eid}")
         eag = c2.number_input(f"ประตู {fe['away']} (ที่ถูกต้อง)", 0, 30, int(er["score"][1]), key=f"ed_ag_{eid}")
@@ -666,8 +643,7 @@ with tab2:
 with tab3:
     store = q.Store(DATA_DIR)
     S = store.state
-    st.markdown(d.stats_dashboard(S, store.history), unsafe_allow_html=True)
-    st.markdown(d.score_ladder(store.history, store.params["breakeven_wr"]), unsafe_allow_html=True)
+    show(SP.stats_story(S, store.history, store.params), key="stats")
     with st.expander("⚙ ตั้งค่าระบบ: สถานะ “ข้าม” และการแช่แข็งน้ำหนัก Rule"):
         P0 = store.params
         a1, a2 = st.columns(2)
@@ -708,7 +684,6 @@ with tab3:
                 store.state["weights"].update(q.DEFAULT_WEIGHTS)
                 store.save()
                 st.success("รีเซ็ตแล้ว (ค่าเริ่มต้นคือแบบที่ทำผลดีที่สุดใน backtest ของข้อมูลชุดปัจจุบัน)")
-    st.markdown(d.rule_lifecycle(S, store.params), unsafe_allow_html=True)
     with st.expander("🗑 ลบรายการในประวัติ"):
         opts_h = {r["id"]: f"{r['features']['home']} vs {r['features']['away']} ({'ผลแล้ว' if r['status'] == 'settled' else 'รอผล'})"
                   for r in reversed(store.history)}
@@ -741,8 +716,8 @@ with tab4:
             with st.spinner("กำลังทดสอบย้อนหลัง..."):
                 ss["bt"] = bt.run_backtest(store.history, {"disc_min_n": int(bt_min), "score_mode": bt_mode}, permute=int(bt_perm))
         if ss.get("bt"):
-            st.markdown(bt.report_html(ss["bt"]), unsafe_allow_html=True)
-            st.download_button("⬇ ดาวน์โหลดรายงาน Backtest (HTML)", bt.report_document(ss["bt"]),
+            show(SP.backtest_story(ss["bt"]), key="bt")
+            st.download_button("⬇ ดาวน์โหลดรายงาน Backtest (HTML แบบเล่าเรื่อง)", SP.backtest_document(ss["bt"]),
                                file_name=f"backtest_{time.strftime('%Y%m%d')}.html", mime="text/html", key="dl_bt")
 
 # ================================================================ TAB 4
@@ -752,15 +727,9 @@ with tab5:
     be = q.remote_backend()
     cfg_ok = be is not None
     be_name = {"sheets": "Google Sheets", "gist": "GitHub Gist"}.get(be, "")
-    if not cfg_ok:
-        chip = ("ยังไม่ได้เปิดซิงก์ · ข้อมูลจะหายเมื่อแอปรีสตาร์ท", "bad")
-    elif rs.get("ok") is False:
-        chip = (f"ซิงก์มีปัญหา: {rs.get('error')}", "bad")
-    else:
-        chip = (f"เปิดอยู่ ({be_name}) · ซิงก์ล่าสุด {rs.get('last') or 'ยังไม่มีการซิงก์ในรอบนี้'}", "ok")
-    card("เก็บข้อมูลถาวร (ซิงก์อัตโนมัติ)", chips_html([chip]) +
-         '<div class="muted" style="margin-top:10px">ทุกครั้งที่บันทึกสัญญาณ/ผลจริง ระบบจะส่งข้อมูลการเรียนรู้ไปเก็บภายนอก '
-         'และดึงกลับมาเองเมื่อแอปรีสตาร์ท' + (" · ใน Google Sheets จะมีชีต “ประวัติ”, “น้ำหนัก Rule” ให้เปิดดูได้" if be == "sheets" else "") + '</div>')
+    show(SP.sync_story(be_name if cfg_ok else None, rs.get("ok"), rs.get("error"), rs.get("last"), len(store.history),
+                       sum(1 for r in store.history if r["status"] == "settled"), len(store.state.get("learned_rules", [])), be == "sheets"),
+         key="sync")
     if cfg_ok:
         c1, c2 = st.columns(2)
         if c1.button("☁️ ซิงก์ขึ้นคลาวด์ตอนนี้"):
@@ -821,8 +790,9 @@ if tab6 is not None:
         acc = access.load(DATA_DIR)
         if access.ACCESS_REMOTE.get("ok") is False:
             st.warning(f"บันทึกรายชื่อ/โควตาขึ้นที่เก็บถาวรไม่สำเร็จ: {access.ACCESS_REMOTE['error']}")
-        card("ระดับผู้ใช้", '<div class="muted">Admin = อีเมลใน Secrets <b>ADMIN_EMAILS</b> · User / Local = ต้องได้รับเชิญจากหน้านี้ · '
-             'User/Local เห็นเฉพาะหน้าวิเคราะห์ และไม่บันทึกผล · โควตารีเซ็ตเที่ยงคืนเวลาไทย · นับเฉพาะการวิเคราะห์ที่สำเร็จ</div>')
+        show(SP.users_story(acc, ADMINS, lambda e_: access.used_today(e_, acc), lambda r_: access.limit_of(r_, acc), access.ROLE_TH), key="users")
+        st.caption("Admin = อีเมลใน Secrets ADMIN_EMAILS · User / Local ต้องได้รับเชิญ เห็นเฉพาะหน้าวิเคราะห์ และไม่บันทึกผล · "
+                   "โควตารีเซ็ตเที่ยงคืนเวลาไทย · นับเฉพาะการวิเคราะห์ที่สำเร็จ")
         st.markdown('<div class="fq"><div class="fq-sec">เชิญผู้ใช้</div></div>', unsafe_allow_html=True)
         i1, i2, i3 = st.columns([3, 1.3, 1])
         new_email = i1.text_input("อีเมล Google", key="inv_email", placeholder="name@gmail.com", label_visibility="collapsed")
@@ -839,11 +809,7 @@ if tab6 is not None:
             except ValueError as e_:
                 st.error(str(e_))
         st.caption("ถ้าแอปใน Google Cloud ยังอยู่สถานะ Testing ต้องเพิ่มอีเมลนี้ใน Test users ด้วย ไม่เช่นนั้น Google จะไม่ให้ล็อกอิน")
-        st.markdown('<div class="fq"><div class="fq-sec">ผู้ใช้ทั้งหมด</div></div>', unsafe_allow_html=True)
-        rows = [[e_, "Admin", "ไม่จำกัด", "(Secrets)"] for e_ in sorted(ADMINS)]
-        for e_, u in sorted(acc["users"].items()):
-            rows.append([e_, access.ROLE_TH[u["role"]], f"{access.used_today(e_, acc)}/{access.limit_of(u['role'], acc)}", u.get("added", "")])
-        st.markdown(html_table(["อีเมล", "ระดับ", "ใช้วันนี้", "เชิญเมื่อ"], rows), unsafe_allow_html=True)
+        st.markdown('<div class="fq"><div class="fq-sec">จัดการผู้ใช้</div></div>', unsafe_allow_html=True)
         if acc["users"]:
             m1, m2 = st.columns([3, 2])
             sel = m1.selectbox("เลือกผู้ใช้", sorted(acc["users"]), key="usr_sel")
@@ -865,7 +831,3 @@ if tab6 is not None:
             access.set_limits(DATA_DIR, nu, nl, EMAIL)
             st.success("บันทึกแล้ว")
             st.rerun()
-        if acc.get("log"):
-            with st.expander("ประวัติการจัดการผู้ใช้"):
-                st.markdown(html_table(["เวลา", "โดย", "การกระทำ", "อีเมล", "รายละเอียด"], list(reversed(acc["log"][-30:]))),
-                            unsafe_allow_html=True)
