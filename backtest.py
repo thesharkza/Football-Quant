@@ -93,7 +93,7 @@ def _walk(recs, scores, params):
     """เดินตามลำดับทีละนัด (ไม่มองอนาคต) คืน (bets ต่อแบบ, stores, จำนวนที่ข้าม)"""
     stores = {k: MemStore(params) for k in ARMS}
     stores["legacy"].legacy_learned = True            # นโยบายเดิม: Rule ที่สร้างเองมีผลทันที
-    stores["legacy"].include_manual = False           # และไม่มี Rule ทดลอง R28-R40
+    stores["legacy"].include_manual = False           # และไม่มี Rule ทดลอง R28-R46
     bets = {k: [] for k in ARMS}
     skipped = 0
     for rec, (hg, ag) in zip(recs, scores):
