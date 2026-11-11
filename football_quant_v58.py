@@ -2153,15 +2153,39 @@ def _load_images(paths):
     return out
 
 
-def _post_json(url, headers, payload):
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as e:
-        sys.exit(f"API error {e.code}: {e.read().decode('utf-8', 'ignore')[:500]}")
-    except urllib.error.URLError as e:
-        sys.exit(f"เชื่อมต่อ API ไม่ได้: {e.reason}")
+RETRY_CODES = {429, 500, 502, 503, 504}
+API_ERR_TH = {429: "Gemini ถูกเรียกใช้ถี่เกินโควตาชั่วคราว", 500: "เซิร์ฟเวอร์ Gemini ขัดข้องชั่วคราว",
+              502: "เซิร์ฟเวอร์ Gemini ขัดข้องชั่วคราว", 503: "Gemini มีผู้ใช้หนาแน่น ให้บริการไม่ได้ชั่วคราว",
+              504: "Gemini ตอบช้าเกินกำหนด", 400: "คำขอไม่ถูกต้อง (ตรวจชื่อโมเดล/รูปภาพ)",
+              401: "API key ไม่ถูกต้อง", 403: "API key ไม่มีสิทธิ์ใช้โมเดลนี้", 404: "ไม่พบโมเดลนี้"}
+
+
+def _post_json(url, headers, payload, tries=4):
+    """เรียก API พร้อมลองใหม่อัตโนมัติเมื่อเซิร์ฟเวอร์ไม่ว่างชั่วคราว (429/5xx): รอ 2, 5, 10 วินาที"""
+    body = json.dumps(payload).encode("utf-8")
+    waits = [2, 5, 10]
+    for k in range(tries):
+        req = urllib.request.Request(url, data=body, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "ignore")[:300]
+            if e.code in RETRY_CODES and k < tries - 1:
+                time.sleep(waits[min(k, len(waits) - 1)])
+                continue
+            msg = API_ERR_TH.get(e.code, "API ตอบกลับผิดพลาด")
+            extra = f" (ลองแล้ว {tries} ครั้ง) — รอสักครู่แล้วกดวิเคราะห์ใหม่" if e.code in RETRY_CODES else ""
+            sys.exit(f"{msg}{extra} [รหัส {e.code}]" + ("" if e.code in RETRY_CODES else f": {detail}"))
+        except urllib.error.URLError as e:
+            if k < tries - 1:
+                time.sleep(waits[min(k, len(waits) - 1)])
+                continue
+            sys.exit(f"เชื่อมต่อ API ไม่ได้: {e.reason}")
+        except TimeoutError:
+            if k < tries - 1:
+                continue
+            sys.exit("Gemini ตอบช้าเกินกำหนด — รอสักครู่แล้วลองใหม่")
 
 
 def extract_from_images(paths, model, api_key):
