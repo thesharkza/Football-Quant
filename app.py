@@ -366,6 +366,15 @@ def run_pipeline(files, opts, do_research, save, box):
                     q.apply_research(m, r, srcs, qs)
                 except SystemExit as e:
                     research_err = str(e.code)
+                st.write("🩺 กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก (ไม่มีข้อมูล = แจ้งว่าไม่มี) ...")
+                try:
+                    r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"),
+                                                          opts["model"], opts["api_key"])
+                    q.apply_team_news(m, r2, srcs2, qs2)
+                except SystemExit as e:
+                    m["team_news"] = {"error": str(e.code)}
+                except Exception as e:  # noqa  (ข้อมูลทีมเป็นส่วนเสริม ห้ามทำให้การวิเคราะห์ล้ม)
+                    m["team_news"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
             st.write("🧪 กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
             chk = json.loads(json.dumps(m))
             chk.pop("warnings", None)
