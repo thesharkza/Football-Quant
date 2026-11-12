@@ -191,8 +191,8 @@ def invite(data_dir, email, role, by):
     with _LOCK:
         acc = load(data_dir)
         old = acc["users"].get(e)
-        acc["users"][e] = {"role": role, "added": (old or {}).get("added") or time.strftime("%Y-%m-%d %H:%M"), "by": norm(by)}
-        acc["log"].append([time.strftime("%Y-%m-%d %H:%M"), norm(by), "invite" if not old else "role", e, role])
+        acc["users"][e] = {"role": role, "added": (old or {}).get("added") or q.now_th("%Y-%m-%d %H:%M"), "by": norm(by)}
+        acc["log"].append([q.now_th("%Y-%m-%d %H:%M"), norm(by), "invite" if not old else "role", e, role])
         _save(data_dir, acc)
 
 
@@ -201,7 +201,7 @@ def remove(data_dir, email, by):
     with _LOCK:
         acc = load(data_dir)
         if acc["users"].pop(e, None) is not None:
-            acc["log"].append([time.strftime("%Y-%m-%d %H:%M"), norm(by), "remove", e, ""])
+            acc["log"].append([q.now_th("%Y-%m-%d %H:%M"), norm(by), "remove", e, ""])
             _save(data_dir, acc)
 
 
@@ -209,7 +209,7 @@ def set_limits(data_dir, user_n, local_n, by):
     with _LOCK:
         acc = load(data_dir)
         acc["limits"] = {"user": max(0, int(user_n)), "local": max(0, int(local_n))}
-        acc["log"].append([time.strftime("%Y-%m-%d %H:%M"), norm(by), "limits", "", f"user={user_n} local={local_n}"])
+        acc["log"].append([q.now_th("%Y-%m-%d %H:%M"), norm(by), "limits", "", f"user={user_n} local={local_n}"])
         _save(data_dir, acc)
 
 
@@ -217,5 +217,5 @@ def reset_usage(data_dir, email, by):
     with _LOCK:
         acc = load(data_dir)
         (acc["usage"].get(today()) or {}).pop(norm(email), None)
-        acc["log"].append([time.strftime("%Y-%m-%d %H:%M"), norm(by), "reset", norm(email), ""])
+        acc["log"].append([q.now_th("%Y-%m-%d %H:%M"), norm(by), "reset", norm(email), ""])
         _save(data_dir, acc)
