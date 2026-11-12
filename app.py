@@ -691,6 +691,20 @@ with tab3:
                 store.state["weights"].update(q.DEFAULT_WEIGHTS)
                 store.save()
                 st.success("รีเซ็ตแล้ว (ค่าเริ่มต้นคือแบบที่ทำผลดีที่สุดใน backtest ของข้อมูลชุดปัจจุบัน)")
+    with st.expander("♻ คำนวณสถานะ Rule ใหม่ทั้งหมดจากประวัติ"):
+        st.caption("ไล่คำนวณการเรียนรู้ใหม่ตั้งแต่นัดแรกตามลำดับที่บันทึกผล ด้วยเกณฑ์ปัจจุบัน: ตัวนับผลของ Rule ผู้สมัครจะครบตั้งแต่วันที่ Rule ถูกสร้าง "
+                   "Rule ที่ผ่านเกณฑ์จะเปลี่ยนเป็น “ใช้งาน” และมีผลต่อการฟันธงนัดถัดไป · ไม้ที่บันทึกไว้แล้วและน้ำหนักที่ใช้ฟันธง (ขณะแช่แข็ง) ไม่เปลี่ยน · "
+                   "ระบบจะทำขั้นตอนเดียวกันนี้เองทุกครั้งที่คุณแก้สกอร์หรือยกเลิกผล")
+        ok_rb = st.checkbox("ยืนยันการคำนวณใหม่ (ควรดาวน์โหลดไฟล์สำรองที่แท็บ “สำรองข้อมูล” ก่อน)", key="rb_ok")
+        if st.button("♻ คำนวณใหม่ทั้งหมด", disabled=not ok_rb, key="rb_go"):
+            before_ = {k: v.get("status") for k, v in (store.state.get("lifecycle") or {}).items()}
+            n_rb = q.rebuild_learning(store)
+            store.save()
+            life_ = store.state.get("lifecycle") or {}
+            act_ = sorted(k for k, v in life_.items() if v.get("status") == "active")
+            chg_ = sum(1 for k, v in life_.items() if before_.get(k) != v.get("status"))
+            st.success(f"คำนวณใหม่จาก {n_rb} นัดแล้ว · Rule ที่เปลี่ยนสถานะ {chg_} ข้อ · ใช้งานอยู่: {', '.join(act_) if act_ else 'ไม่มี'}")
+            cloud_warn()
     with st.expander("🗑 ลบรายการในประวัติ"):
         opts_h = {r["id"]: f"{r['features']['home']} vs {r['features']['away']} ({'ผลแล้ว' if r['status'] == 'settled' else 'รอผล'})"
                   for r in reversed(store.history)}
