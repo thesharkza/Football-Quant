@@ -356,69 +356,88 @@ def make_result(m, opts, ext_warn=(), research_err=None, save=True):
             "research_err": research_err, "saved": saved, "report": q.render_report(m, f, contribs, pick, store)}
 
 
-def run_pipeline(files, opts, do_research, save, box):
-    with box:
-        status = st.status("กำลังวิเคราะห์...", expanded=True)
-    ext_warn, research_err = [], None
-    try:
-        with status:
-            st.write("🖼 กำลังอ่านรูปด้วย Gemini ...")
-            with tempfile.TemporaryDirectory() as td:
-                paths = []
-                for i, uf in enumerate(files, 1):
-                    p = os.path.join(td, f"{i}_{os.path.basename(uf.name)}")
-                    with open(p, "wb") as fh:
-                        fh.write(uf.getbuffer())
-                    paths.append(p)
-                m = q.extract_from_images(paths, opts["model"], opts["api_key"])
-            ext_warn = m.pop("warnings", None) or []
-            if do_research:
-                st.write("🔎 กำลังค้นหาข้อมูลบริบทแมตช์ (Google Search) ...")
-                try:
-                    r, srcs, qs = q.research_context(m.get("home"), m.get("away"), m.get("league"),
-                                                     opts["model"], opts["api_key"])
-                    q.apply_research(m, r, srcs, qs)
-                except SystemExit as e:
-                    research_err = str(e.code)
-                st.write("🩺 กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก (ไม่มีข้อมูล = แจ้งว่าไม่มี) ...")
-                try:
-                    r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"),
-                                                          opts["model"], opts["api_key"])
-                    q.apply_team_news(m, r2, srcs2, qs2)
-                except SystemExit as e:
-                    m["team_news"] = {"error": str(e.code)}
-                except AttributeError:
-                    m["team_news"] = {"error": "ไฟล์ football_quant_v58.py บน GitHub ยังเป็นรุ่นเก่า — อัปโหลดไฟล์รุ่นล่าสุดแล้วรีบูตแอป"}
-                except Exception as e:  # noqa  (ข้อมูลทีมเป็นส่วนเสริม ห้ามทำให้การวิเคราะห์ล้ม)
-                    m["team_news"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
-            st.write("🧪 กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
-            chk = json.loads(json.dumps(m))
-            chk.pop("warnings", None)
-            q.validate_match(chk)
-            ss["match_json"] = json.dumps(m, ensure_ascii=False, indent=2, default=str)
-            if chk.get("critical"):
-                status.update(label="พบข้อมูลที่อาจอ่านผิด — กรุณาตรวจก่อนวิเคราะห์", state="error", expanded=False)
-                return {"_gate": True, "m": m, "ext_warn": ext_warn, "research_err": research_err,
-                        "critical": chk["critical"], "save": save}
-            st.write("📊 กำลังวิเคราะห์ราคาและฟันธง ...")
-            res = make_result(m, opts, ext_warn, research_err, save)
-            ss["match_json"] = json.dumps({k: v for k, v in res["m"].items() if k != "warnings"},
-                                          ensure_ascii=False, indent=2, default=str)
-            status.update(label="วิเคราะห์เสร็จแล้ว", state="complete", expanded=False)
-        return res
-    except SystemExit as e:
-        status.update(label="เกิดข้อผิดพลาด", state="error")
-        with box:
-            st.error(str(e.code))
-    except ValueError as e:
-        status.update(label="ข้อมูลไม่ครบ", state="error")
-        with box:
-            st.error(f"อ่านข้อมูลจากรูปได้ไม่ครบ: {e}")
-    except Exception as e:  # noqa
-        status.update(label="เกิดข้อผิดพลาด", state="error")
-        with box:
-            st.error(f"เกิดข้อผิดพลาดที่ไม่คาดคิด: {e}")
-    return None
+def pipeline_job(job, blobs, opts, do_research, save):
+    """ขั้นตอนวิเคราะห์ทั้งหมด (รันในเธรดเบื้องหลัง ห้ามเรียกคำสั่งแสดงผลของ Streamlit) คืนผลลัพธ์หรือ raise"""
+    step = job["steps"].append
+    research_err = None
+    step("🖼 กำลังอ่านรูปด้วย Gemini ...")
+    with tempfile.TemporaryDirectory() as td:
+        paths = []
+        for i, (name, data) in enumerate(blobs, 1):
+            p = os.path.join(td, f"{i}_{os.path.basename(name)}")
+            with open(p, "wb") as fh:
+                fh.write(data)
+            paths.append(p)
+        m = q.extract_from_images(paths, opts["model"], opts["api_key"])
+    blobs.clear()                                   # ไม่เก็บรูปไว้ในหน่วยความจำ
+    ext_warn = m.pop("warnings", None) or []
+    if do_research:
+        step("🔎 กำลังค้นหาข้อมูลบริบทแมตช์ (Google Search) ...")
+        try:
+            r, srcs, qs = q.research_context(m.get("home"), m.get("away"), m.get("league"), opts["model"], opts["api_key"])
+            q.apply_research(m, r, srcs, qs)
+        except SystemExit as e:
+            research_err = str(e.code)
+        except Exception as e:  # noqa
+            research_err = f"{type(e).__name__}: {str(e)[:150]}"
+        step("🩺 กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก ...")
+        try:
+            r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"), opts["model"], opts["api_key"])
+            q.apply_team_news(m, r2, srcs2, qs2)
+        except SystemExit as e:
+            m["team_news"] = {"error": str(e.code)}
+        except AttributeError:
+            m["team_news"] = {"error": "ไฟล์ football_quant_v58.py บน GitHub ยังเป็นรุ่นเก่า — อัปโหลดไฟล์รุ่นล่าสุดแล้วรีบูตแอป"}
+        except Exception as e:  # noqa  (ข้อมูลทีมเป็นส่วนเสริม ห้ามทำให้การวิเคราะห์ล้ม)
+            m["team_news"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
+    step("🧪 กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
+    chk = json.loads(json.dumps(m))
+    chk.pop("warnings", None)
+    q.validate_match(chk)
+    if chk.get("critical"):
+        return {"_gate": True, "m": m, "ext_warn": ext_warn, "research_err": research_err,
+                "critical": chk["critical"], "save": save,
+                "match_json": json.dumps(m, ensure_ascii=False, indent=2, default=str)}
+    step("📊 กำลังวิเคราะห์ราคาและฟันธง ...")
+    res = make_result(m, opts, ext_warn, research_err, save)
+    res["match_json"] = json.dumps({k: v for k, v in res["m"].items() if k != "warnings"}, ensure_ascii=False, indent=2, default=str)
+    return res
+
+
+JOB_OWNER = (_GKEY if AUTH_ON else st.session_state.get("tok")) or None
+
+
+def current_job():
+    """งานวิเคราะห์ของหน้านี้: จากรหัสในลิงก์ (?job=) หรืองานล่าสุดของผู้ใช้ (กู้คืนหลังหน้าเว็บหลุด/เปิดใหม่)"""
+    j = q.job_get(ss.get("job_id") or st.query_params.get("job"))
+    if j is None and JOB_OWNER:
+        j = q.job_latest(JOB_OWNER)
+    if j is not None and (j.get("dismissed") or (JOB_OWNER and j["owner"] not in (None, JOB_OWNER))):
+        return None                                  # ปิดไปแล้ว หรือเป็นงานของผู้ใช้อื่น
+    return j
+
+
+def dismiss_job():
+    jx = q.job_get(ss.get("job_id") or st.query_params.get("job"))
+    if jx and jx["status"] != "running":
+        jx["dismissed"] = True
+    ss.pop("job_id", None)
+    if "job" in st.query_params:
+        del st.query_params["job"]
+
+
+@st.fragment(run_every=2)
+def job_watch(jid):
+    """แสดงความคืบหน้าของงานเบื้องหลัง ตรวจทุก 2 วินาที เสร็จเมื่อไหร่โหลดผลทันที"""
+    j = q.job_get(jid)
+    if j is None or j["status"] != "running":
+        st.rerun()
+    sec = int(time.time() - j["started"])
+    steps = "".join(f'<div style="opacity:{1 if i == len(j["steps"]) - 1 else .55}">{"⏳" if i == len(j["steps"]) - 1 else "✅"} {esc(s_[2:].strip())}</div>'
+                    for i, s_ in enumerate(j["steps"]))
+    st.markdown(f'<div class="card"><h4>กำลังวิเคราะห์เบื้องหลัง · {sec} วินาที</h4>{steps}'
+                '<div class="muted" style="margin-top:8px">สลับไปแอปอื่นหรือปิดหน้าจอได้ งานยังเดินต่อบนเซิร์ฟเวอร์ กลับมาหน้านี้เมื่อไหร่ก็เห็นผล</div></div>',
+                unsafe_allow_html=True)
 
 
 _F_DEFAULTS = {"rank_home": None, "rank_away": None, "league_size": None, "verify": [], "verify_fail": False,
@@ -490,7 +509,8 @@ with tab1:
     if quota_left == 0:
         st.markdown(f'<div class="res lose">ใช้สิทธิ์วิเคราะห์ของวันนี้ครบแล้ว · รีเซ็ตในอีก {access.reset_in()} (เที่ยงคืนเวลาไทย)</div>',
                     unsafe_allow_html=True)
-    go = st.button("🚀 วิเคราะห์อัตโนมัติ", type="primary", disabled=not files or quota_left == 0)
+    _running = (current_job() or {}).get("status") == "running"
+    go = st.button("🚀 วิเคราะห์อัตโนมัติ", type="primary", disabled=not files or quota_left == 0 or _running)
     box = st.container()
     opts = get_opts()
     if go:
@@ -501,19 +521,41 @@ with tab1:
             with box:
                 st.error(f"ใช้สิทธิ์วิเคราะห์ของวันนี้ครบแล้ว · รีเซ็ตในอีก {access.reset_in()}")
         else:
-            res = run_pipeline(files, opts, do_research, do_save, box)
-            if not res and AUTH_ON:
-                access.refund(DATA_DIR, EMAIL, ROLE)      # ล้มเหลว -> คืนสิทธิ์
-            if res and res.get("_gate"):
-                ss["gate"] = res
-                ss.pop("res", None)
-                ss["up_ver"] += 1
-                st.rerun()
-            elif res:
-                ss.pop("gate", None)
-                ss["res"] = res
-                ss["up_ver"] += 1             # วิเคราะห์สำเร็จ -> เคลียร์รูปทันที (ถ้าล้มเหลวจะคงรูปไว้ให้ลองใหม่)
-                ss["cleared_msg"] = True
+            dismiss_job()                            # งานก่อนหน้า (ถ้ามี) ไม่ต้องกู้คืนอีก
+            job = q.job_new(JOB_OWNER)
+            if AUTH_ON:
+                job["on_finish"] = lambda j_, e_=EMAIL, r_=ROLE: (access.refund(DATA_DIR, e_, r_) if j_["status"] == "error" else None)
+            q.job_start(job, pipeline_job, [(uf.name, uf.getvalue()) for uf in files], opts, do_research, do_save)
+            ss["job_id"] = job["id"]
+            st.query_params["job"] = job["id"]
+            ss.pop("res", None)
+            ss.pop("gate", None)
+            ss["up_ver"] += 1                 # ส่งรูปให้งานเบื้องหลังแล้ว -> เคลียร์รูปจากหน้าจอทันที
+            ss["cleared_msg"] = True
+            st.rerun()
+    job = current_job()
+    if job is not None:
+        if job["status"] == "running":
+            ss["job_id"] = job["id"]
+            with box:
+                job_watch(job["id"])
+        elif ss.get("job_seen") != job["id"]:      # โหลดผลครั้งเดียวต่อการเปิดหน้า (เปิดหน้าใหม่/เชื่อมต่อใหม่ = โหลดผลกลับมาให้)
+            ss["job_seen"] = job["id"]
+            ss["job_id"] = job["id"]
+            if job["status"] == "error":
+                ss["job_err"] = job["error"]
+            elif job["status"] == "gate":
+                ss["gate"] = job["result"]
+                ss["match_json"] = job["result"].get("match_json") or ss.get("match_json")
+            else:
+                ss["res"] = job["result"]
+                ss["match_json"] = job["result"].get("match_json") or ss.get("match_json")
+    if ss.get("job_err"):
+        with box:
+            st.error(ss["job_err"])
+            if st.button("ปิดข้อความ", key="job_err_close"):
+                ss.pop("job_err", None)
+                dismiss_job()
                 st.rerun()
     if ss.get("gate"):
         g = ss["gate"]
@@ -528,11 +570,13 @@ with tab1:
                 try:
                     ss["res"] = make_result(json.loads(json.dumps(g["m"])), get_opts(), g["ext_warn"], g["research_err"], g["save"])
                     ss.pop("gate", None)
+                    dismiss_job()
                     st.rerun()
                 except ValueError as e:
                     st.error(f"ข้อมูลไม่ครบ/ไม่ถูกต้อง: {e}")
             if g2.button("✖ ยกเลิก", key="gate_cancel"):
                 ss.pop("gate", None)
+                dismiss_job()
                 if AUTH_ON:
                     access.refund(DATA_DIR, EMAIL, ROLE)      # ไม่ได้ผลวิเคราะห์ -> คืนสิทธิ์
                 st.rerun()
@@ -570,6 +614,7 @@ with tab1:
                 m2 = json.loads(ss["match_json"])
                 ss["res"] = make_result(m2, get_opts(), save=bool(ss.get("opt_save", True)))
                 ss.pop("gate", None)
+                dismiss_job()
                 st.rerun()
             except json.JSONDecodeError as e:
                 st.error(f"รูปแบบข้อมูลไม่ถูกต้อง: {e}")
