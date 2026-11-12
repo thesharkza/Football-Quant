@@ -363,6 +363,10 @@ def build_features(m, P):
     f["verify_fail"] = any(not ok for ok, _ in f["verify"])
     f["tags"] = make_tags(f, P)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
+    try:
+        f["score_model"] = score_model(f)              # สกอร์ที่น่าจะเป็น (แสดงผลเท่านั้น ไม่มีผลต่อการฟันธง)
+    except Exception:  # noqa
+        f["score_model"] = None
     return f
 
 
@@ -1586,6 +1590,13 @@ def render_report(m, f, contribs, pick, store):
         L.append("  ⚠ Current Odds Priority: สัญญาณนี้มาจากการไหลของราคา (เทียบราคาเปิด) ล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน ระบบลดคะแนนเหลือ 60% แล้ว")
     if pick["tier"] == "ต่ำ":
         L.append("  ⚠ สัญญาณอ่อน: โปรแกรมบังคับฟันธงตาม Rule 13 แต่ควรลดสัดส่วนเงินเดิมพัน")
+    sm = f.get("score_model")
+    if sm:
+        br = best_by_result(sm)
+        L.append(f"\n🔢 สกอร์ที่น่าจะเป็น (จากราคาตลาด · แสดงผลเท่านั้น): ประตูคาดหมาย {f['home']} {sm['lh']:.2f} – {sm['la']:.2f} {f['away']}")
+        L.append("  อันดับ: " + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:5]))
+        L.append(f"  ถ้า{f['home']}ชนะ: {br['home'][0]}-{br['home'][1]} · ถ้าเสมอ: {br['draw'][0]}-{br['draw'][1]} · ถ้า{f['away']}ชนะ: {br['away'][0]}-{br['away'][1]}")
+        L.append(f"  สกอร์อันดับ 1 มีโอกาสถูกเพียง ~{sm['top'][0][2]:.0%} — ใช้ดูภาพรวมของเกม ไม่ใช่สกอร์ที่จะออกจริง")
     L += team_news_lines(m)
     return "\n".join(L)
 
@@ -1683,6 +1694,154 @@ def settle_all(rec, hg, ag):
     out["X12_HOME"] = [1 if hg > ag else -1]
     out["X12_AWAY"] = [1 if ag > hg else -1]
     return {k: (sum(v) / len(v), v) for k, v in out.items()}
+
+
+# ----------------------------------------------------------------------------
+# สกอร์ที่น่าจะเป็น (ไม่มีผลต่อการฟันธง): หา "ประตูคาดหมาย" ของสองทีมที่ทำให้แบบจำลอง
+# Dixon-Coles (Poisson + ปรับสกอร์ต่ำ) ให้ราคายุติธรรมตรงกับตลาด 1X2 + แฮนดิแคป + สูง/ต่ำ ปัจจุบันมากที่สุด
+# ----------------------------------------------------------------------------
+SCORE_MAXG = 10
+SCORE_RHO = -0.08                                       # ค่ามาตรฐานของ Dixon-Coles (เพิ่มโอกาส 0-0/1-1 เล็กน้อย)
+
+
+def _fair_dec(w_a, w_b):
+    """ค่าน้ำแบบฮ่องกงสองฝั่ง -> ราคาทศนิยมยุติธรรม (ตัดค่าต๋งแล้ว) ของฝั่ง a"""
+    ia, ib = 1.0 / (1.0 + w_a), 1.0 / (1.0 + w_b)
+    return (ia + ib) / ia
+
+
+def _score_grid(lh, la, rho=SCORE_RHO, G=SCORE_MAXG):
+    """lh, la = array ของประตูคาดหมาย -> เมทริกซ์ความน่าจะเป็น [..., สกอร์เจ้าบ้าน, สกอร์ทีมเยือน]"""
+    import numpy as np
+    g = np.arange(G + 1)
+    lg = np.array([math.lgamma(k + 1) for k in g])
+    lh, la = np.asarray(lh, float), np.asarray(la, float)
+    ph = np.exp(g * np.log(lh[..., None]) - lh[..., None] - lg)
+    pa = np.exp(g * np.log(la[..., None]) - la[..., None] - lg)
+    M = ph[..., :, None] * pa[..., None, :]
+    M[..., 0, 0] *= np.clip(1 - lh * la * rho, 0, None)
+    M[..., 0, 1] *= np.clip(1 + lh * rho, 0, None)
+    M[..., 1, 0] *= np.clip(1 + la * rho, 0, None)
+    M[..., 1, 1] *= (1 - rho)
+    return M / M.sum(axis=(-1, -2), keepdims=True)
+
+
+def score_model(f):
+    """คืน dict สกอร์ที่น่าจะเป็นจากราคาปัจจุบัน หรือ None ถ้าข้อมูลราคาไม่พอ"""
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    try:
+        x = [float(v) for v in f["x12_cur"]]
+        if min(x) <= 1.0:
+            return None
+    except Exception:  # noqa
+        return None
+    inv = [1 / v for v in x]
+    t1x2 = [v / sum(inv) for v in inv]
+    G = SCORE_MAXG
+    hs, as_ = np.meshgrid(np.arange(G + 1), np.arange(G + 1), indexing="ij")
+    terms = []                                           # (เมทริกซ์ผลตอบแทนต่อเดิมพัน 1 หน่วยที่ราคายุติธรรม)
+    try:
+        hw = f["fav_water_c"] if f["fav"] == "home" else f["dog_water_c"]
+        aw = f["dog_water_c"] if f["fav"] == "home" else f["fav_water_c"]
+        dec = _fair_dec(hw, aw)
+        pay = np.array([[profit(halves_hdp("home", f["line_c"], h, a), dec - 1) for a in range(G + 1)] for h in range(G + 1)])
+        terms.append(pay)
+    except Exception:  # noqa
+        pass
+    if f.get("has_ou"):
+        try:
+            dec = _fair_dec(f["over_water_c"], f["under_water_c"])
+            pay = np.array([[profit(halves_ou("over", f["ou_c"], h, a), dec - 1) for a in range(G + 1)] for h in range(G + 1)])
+            terms.append(pay)
+        except Exception:  # noqa
+            pass
+    hwin, draw, awin = (hs > as_).astype(float), (hs == as_).astype(float), (hs < as_).astype(float)
+
+    def loss(M):
+        ps = [(M * k).sum(axis=(-1, -2)) for k in (hwin, draw, awin)]
+        L = sum((p - t) ** 2 for p, t in zip(ps, t1x2))
+        for pay in terms:                                 # ราคายุติธรรม = ผลตอบแทนคาดหมายเป็นศูนย์
+            L = L + 0.5 * (M * pay).sum(axis=(-1, -2)) ** 2
+        return L
+
+    best = None
+    for lo, hi, step in ((0.1, 4.5, 0.05), (None, None, 0.01)):
+        if lo is None:
+            c_h, c_a = best
+            gh = np.arange(max(0.05, c_h - 0.06), c_h + 0.061, step)
+            ga = np.arange(max(0.05, c_a - 0.06), c_a + 0.061, step)
+        else:
+            gh = ga = np.arange(lo, hi + 1e-9, step)
+        LH, LA = np.meshgrid(gh, ga, indexing="ij")
+        Ls = loss(_score_grid(LH, LA))
+        i, j = np.unravel_index(int(np.argmin(Ls)), Ls.shape)
+        best = (float(gh[i]), float(gh[0] * 0 + ga[j]))
+        err = float(Ls[i, j])
+    lh, la = best
+    M = _score_grid(lh, la)
+    flat = sorted(((float(M[h, a]), h, a) for h in range(G + 1) for a in range(G + 1)), reverse=True)
+    top = [[h, a, round(p, 4)] for p, h, a in flat[:6]]
+    grid = [[round(float(M[h, a]), 4) for a in range(6)] for h in range(6)]
+    pH, pD, pA = (float((M * k).sum()) for k in (hwin, draw, awin))
+    return {"lh": round(lh, 2), "la": round(la, 2), "top": top, "grid": grid,
+            "p": [round(pH, 4), round(pD, 4), round(pA, 4)], "market_p": [round(v, 4) for v in t1x2],
+            "exp_total": round(lh + la, 2), "rmse": round((err / max(3 + len(terms), 1)) ** 0.5, 4),
+            "inputs": 1 + len(terms), "outside_5": round(1 - sum(sum(r) for r in grid), 4)}
+
+
+_SCORE_MEMO = {}
+
+
+def best_by_result(sm):
+    """สกอร์ที่น่าจะเป็นที่สุดแยกตามผล (เจ้าบ้านชนะ / เสมอ / ทีมเยือนชนะ) จากตาราง 0-5"""
+    out = {}
+    for key, cond in (("home", lambda h, a: h > a), ("draw", lambda h, a: h == a), ("away", lambda h, a: h < a)):
+        cells = [(sm["grid"][h][a], h, a) for h in range(6) for a in range(6) if cond(h, a)]
+        p, h, a = max(cells)
+        out[key] = (h, a, p)
+    return out
+
+
+def score_accuracy(history):
+    """วัดผลการทายสกอร์ย้อนหลังกับผลจริง (ทุกไม้ที่บันทึกผลแล้ว รวมไม้ที่ข้าม)"""
+    import math as _m
+    rows, freq = [], {}
+    for r in history:
+        if r.get("status") != "settled" or not r.get("score"):
+            continue
+        sm = r["features"].get("score_model")
+        if not sm:
+            key = (r.get("id"), str(r["features"].get("x12_cur")), r["features"].get("line_c"), r["features"].get("ou_c"))
+            if key not in _SCORE_MEMO:
+                _SCORE_MEMO[key] = score_model(r["features"])
+            sm = _SCORE_MEMO[key]
+        if not sm:
+            continue
+        hg, ag = int(r["score"][0]), int(r["score"][1])
+        freq[(hg, ag)] = freq.get((hg, ag), 0) + 1
+        tops = [(t[0], t[1]) for t in sm["top"]]
+        g = sm["grid"]
+        p_act = g[hg][ag] if hg < 6 and ag < 6 else None
+        res = (hg > ag) - (hg < ag)
+        mr = (tops[0][0] > tops[0][1]) - (tops[0][0] < tops[0][1])
+        rows.append({"top1": tops[0] == (hg, ag), "top3": (hg, ag) in tops[:3], "p_act": p_act, "p_top1": sm["top"][0][2],
+                     "res_hit": mr == res, "tot_err": abs(sm["exp_total"] - (hg + ag)), "score": (hg, ag), "pred": tops[0]})
+    n = len(rows)
+    if not n:
+        return {"n": 0}
+    common = max(freq.items(), key=lambda kv: kv[1])
+    ll = [-_m.log(max(x["p_act"], 1e-4)) for x in rows if x["p_act"] is not None]
+    pred_freq = {}
+    for x in rows:
+        pred_freq[x["pred"]] = pred_freq.get(x["pred"], 0) + 1
+    return {"n": n, "top1": sum(x["top1"] for x in rows), "top3": sum(x["top3"] for x in rows),
+            "exp_top1": sum(x["p_top1"] for x in rows) / n,
+            "res_hit": sum(x["res_hit"] for x in rows), "mae_total": sum(x["tot_err"] for x in rows) / n,
+            "common_score": common[0], "common_n": common[1], "logloss": (sum(ll) / len(ll)) if ll else None,
+            "pred_freq": sorted(pred_freq.items(), key=lambda kv: -kv[1])[:5]}
 
 
 def profit(halves, price_win):
