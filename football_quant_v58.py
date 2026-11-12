@@ -162,6 +162,14 @@ ALL_MARKETS = ["HDP_HOME", "HDP_AWAY", "OU_OVER", "OU_UNDER", "X12_HOME", "X12_A
 # ----------------------------------------------------------------------------
 # 1) เครื่องมือช่วย
 # ----------------------------------------------------------------------------
+TZ_TH = _dt_mod.timezone(_dt_mod.timedelta(hours=7))
+
+
+def now_th(fmt="%Y-%m-%d %H:%M"):
+    """เวลาปัจจุบันตามเวลาไทย (เซิร์ฟเวอร์คลาวด์ใช้ UTC ทำให้เวลาที่บันทึก/วันที่ที่ส่งให้ AI ช้าไป 7 ชั่วโมง)"""
+    return _dt_mod.datetime.now(TZ_TH).strftime(fmt)
+
+
 def implied(odds):
     inv = [1.0 / o for o in odds]
     s = sum(inv)
@@ -344,7 +352,8 @@ def build_features(m, P):
         f["class_sup"] = False                                                                   # ปิด Rule 14
     hfh = m.get("home_form_home") or {}
     gm = sum(hfh.get(k, 0) for k in ("w", "d", "l") if _num(hfh.get(k)))
-    f["home_momentum"] = bool(abs(lc) < 1e-9 and gm >= 5 and hfh.get("l", 0) == 0 and hfh.get("w", 0) / gm > 0.5)  # Rule 25
+    hw_ = hfh.get("w") if _num(hfh.get("w")) else 0
+    f["home_momentum"] = bool(abs(lc) < 1e-9 and gm >= 5 and hfh.get("l", 0) == 0 and hw_ / gm > 0.5)  # Rule 25
     veto = set()
     if f["class_sup"]:
         veto.add(f["dog_hdp"])
@@ -858,7 +867,7 @@ def exp32(f, P, c):
 def exp33(f, P, c):
     x = _xv(f)
     if _bottom(f, "home", P) and x["home_ga"] is not None and x["home_ga"] > 2.0 and x["ra"] is not None and x["size"] and x["ra"] <= 0.5 * x["size"]:
-        return _exp([("HDP_AWAY", 1.5)], ["HDP_HOME"], "R33: เจ้าบ้านบ๊วยเสียเฉลี่ย > 2 ในบ้าน พบทีมกลุ่มบน -> ห้ามเลือกเจ้าบ้าน")
+        return _exp([("HDP_AWAY", 1.5)], ["HDP_HOME"], "R33: เจ้าบ้านบ๊วยเสียเฉลี่ย > 2 " + ("ในบ้าน" if f.get("venue_stats") else "(5 นัดหลัง รวมเหย้า-เยือน)") + " พบทีมกลุ่มบน -> ห้ามเลือกเจ้าบ้าน")
 
 
 def exp34(f, P, c):
@@ -893,7 +902,7 @@ def exp38(f, P, c):
 def exp39(f, P, c):
     x = _xv(f)
     if f["fav"] == "home" and x["home_ga"] is not None and x["home_ga"] > 1.5:
-        return _exp([("HDP_AWAY", 1.0)], ["HDP_HOME"], "R39/R41: เจ้าบ้านเป็นต่อแต่เสียเฉลี่ย > 1.5 ในบ้าน -> ตัดสิทธิ์ถือหางเจ้าบ้าน")
+        return _exp([("HDP_AWAY", 1.0)], ["HDP_HOME"], "R39/R41: เจ้าบ้านเป็นต่อแต่เสียเฉลี่ย > 1.5 " + ("ในบ้าน" if f.get("venue_stats") else "(5 นัดหลัง รวมเหย้า-เยือน)") + " -> ตัดสิทธิ์ถือหางเจ้าบ้าน")
 
 
 def exp40(f, P, c):
@@ -1034,11 +1043,29 @@ def rule_status(store, rid, kind):
     return e["status"] if e else "shadow"
 
 
+X12_ROLE_REASON = ("ไม่ใช้: Rule แบบ 1X2 ไม่ถูกนำไปคิดคะแนนฟันธง และเกณฑ์ 'ชนะเกิน 50%' ใช้กับราคา 1X2 ไม่ได้ "
+                   "(ทีมต่อชนะเกินครึ่งอยู่แล้วโดยไม่มีกำไร)")
+
+
+def retire_x12_learned(state):
+    """ถอด Rule ที่ระบบสร้างเองซึ่งชี้ตลาด 1X2 (ไม่มีผลต่อการฟันธง + เกณฑ์ค้นพบไม่ถูกต้องสำหรับราคาไม่ใช่ 1:1) คืนจำนวนที่ถอด"""
+    life = state.setdefault("lifecycle", {})
+    n = 0
+    for lr in state.get("learned_rules", []):
+        if str(lr.get("role", "")).startswith("X12"):
+            e = life.setdefault(lr["id"], {"kind": "learned", "n": 0, "w": 0, "l": 0, "res": [], "since": 0})
+            if e.get("status") != "retired" or lr.get("enabled", True):
+                n += 1
+            e["status"], e["reason"] = "retired", X12_ROLE_REASON
+            lr["enabled"] = False
+    return n
+
+
 def candidates_for(f, P, store, contribs=None):
     """Rule ผู้สมัคร (ที่ระบบสร้างเอง + Rule ทดลอง) ที่เงื่อนไขตรงกับแมตช์นี้ -> {id: {kind, market, role, rec, veto, note, flow_only}}"""
     out = {}
     for lr in store.state.get("learned_rules", []):
-        if lr.get("enabled", True) and set(lr["tags"]) <= set(f.get("tags", [])):
+        if lr.get("enabled", True) and not str(lr["role"]).startswith("X12") and set(lr["tags"]) <= set(f.get("tags", [])):
             mk = ROLE_TO_MARKET(lr["role"], f)
             out[lr["id"]] = {"kind": "learned", "market": mk, "role": lr["role"], "rec": [(mk, lr["strength"])], "veto": [],
                              "flow_only": False,
@@ -1117,7 +1144,7 @@ def _gist_pull():
                 with urllib.request.urlopen(req, timeout=30) as r:
                     text = r.read().decode("utf-8")
             out[name] = json.loads(text) if text and text.strip() else None
-        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        REMOTE_STATE.update(ok=True, error=None, last=now_th("%H:%M:%S"))
         return out
     except Exception as e:  # noqa
         REMOTE_STATE.update(ok=False, error=_remote_err(e))
@@ -1137,7 +1164,7 @@ def _gist_push(state, history):
         _gh("PATCH", f"https://api.github.com/gists/{gid}", tok, {"files": {
             "state.json": {"content": json.dumps(state, ensure_ascii=False)},
             "history.json": {"content": json.dumps(history, ensure_ascii=False)}}})
-        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        REMOTE_STATE.update(ok=True, error=None, last=now_th("%H:%M:%S"))
         return True
     except Exception as e:  # noqa
         REMOTE_STATE.update(ok=False, error=_remote_err(e))
@@ -1212,7 +1239,7 @@ def remote_pull():
     REMOTE_STATE.update(enabled=True, backend="sheets")
     try:
         out = _sheets_call({"action": "pull"})
-        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        REMOTE_STATE.update(ok=True, error=None, last=now_th("%H:%M:%S"))
         return {"state.json": out.get("state"), "history.json": out.get("history")}
     except Exception as e:  # noqa
         REMOTE_STATE.update(ok=False, error=_remote_err(e))
@@ -1231,7 +1258,7 @@ def remote_push(state, history):
         return _gist_push(state, history)
     try:
         _sheets_call({"action": "push", "state": state, "history": history, "views": sheet_views(state, history)})
-        REMOTE_STATE.update(ok=True, error=None, last=time.strftime("%H:%M:%S"))
+        REMOTE_STATE.update(ok=True, error=None, last=now_th("%H:%M:%S"))
         return True
     except Exception as e:  # noqa
         REMOTE_STATE.update(ok=False, error=_remote_err(e))
@@ -1267,6 +1294,7 @@ class Store:
         self._migrate()
         for k, v in DEFAULT_WEIGHTS.items():
             self.state["weights"].setdefault(k, v)
+        retire_x12_learned(self.state)
         self.history = self._load(self.hist_p, [])
         ren = getattr(self, "_pending_migration", None)
         if ren:
@@ -1323,6 +1351,7 @@ class Store:
         for k, v in DEFAULT_WEIGHTS.items():
             self.state["weights"].setdefault(k, v)
         self._migrate()
+        retire_x12_learned(self.state)
         self.save(push=False)
         return True
 
@@ -1892,7 +1921,7 @@ def update_weights(store, rec, outcomes):
         old = W.get(rid, 1.0)
         lr = max(P["lr_min"], P["lr"] / math.sqrt(st["n"]))
         w = old * (1 + lr * rr)
-        w += P["decay"] * (1.0 - w)
+        w += P["decay"] * (DEFAULT_WEIGHTS.get(rid, 1.0) - w)
         w = min(P["w_max"], max(P["w_min"], w))
         W[rid] = round(w, 4)
         changes[rid] = (old, w, rr)
@@ -1942,7 +1971,7 @@ def discover_rules(store, verbose=True):
     live_count = sum(1 for r in learned if (life.get(r["id"]) or {}).get("status") != "retired")
     for lr in learned:                               # รีเฟรชสถิติ Rule เดิม
         s = stats.get((tuple(lr["tags"]), lr["role"]))
-        if s and s[0] >= P["disc_min_n"]:
+        if s and s[0] >= P["disc_min_n"] and not str(lr["role"]).startswith("X12"):
             lr["n"], lr["wr"] = s[0], s[1] / s[0]
             lr["strength"] = round(min(2.5, max(0.3, P["learned_base"] * (lr["wr"] - 0.5) * 4)), 3)
             lr["enabled"] = lr["wr"] >= 0.5
@@ -1951,6 +1980,8 @@ def discover_rules(store, verbose=True):
     cands = []
     for (combo, role), (n, w) in stats.items():
         if combo == "__all__" or n < P["disc_min_n"] or (combo, role) in existing or universal & set(combo):
+            continue
+        if str(role).startswith("X12"):               # ราคา 1X2 ไม่ใช่ 1:1 เกณฑ์ชนะ > 50% จึงไม่ได้แปลว่าได้เปรียบ และตลาดนี้ไม่ถูกนำไปคิดคะแนน
             continue
         p = w / n
         lo, _ = wilson(p, n, P["disc_z"])
@@ -1978,7 +2009,7 @@ def discover_rules(store, verbose=True):
             S["shadow_weights"][rid] = 1.0
         rule = {"id": rid, "tags": list(combo), "role": role, "n": n, "wr": round(p, 4),
                 "strength": round(min(2.5, max(0.3, P["learned_base"] * (p - 0.5) * 4)), 3),
-                "enabled": True, "created": time.strftime("%Y-%m-%d %H:%M")}
+                "enabled": True, "created": now_th("%Y-%m-%d %H:%M")}
         new.append(rule)
     learned.extend(new)
     if verbose and new:
@@ -2061,11 +2092,11 @@ def session_revoke(tok):
 
 def record_prediction(store, m, f, contribs, pick, warns=None):
     """บันทึกสัญญาณลงประวัติ (สถานะ pending) คืน (id, บันทึกสำเร็จหรือไม่)"""
-    mid = m.get("id") or slug(f"{f['home']}-vs-{f['away']}-{time.strftime('%Y%m%d-%H%M')}")
+    mid = m.get("id") or slug(f"{f['home']}-vs-{f['away']}-{now_th('%Y%m%d-%H%M')}")
     store.history = [r for r in store.history if not (r["id"] == mid and r["status"] == "pending")]
     if any(r["id"] == mid for r in store.history):
         return mid, False
-    store.history.append({"id": mid, "created": time.strftime("%Y-%m-%d %H:%M"), "status": "pending",
+    store.history.append({"id": mid, "created": now_th("%Y-%m-%d %H:%M"), "status": "pending",
                           "features": f, "contribs": contribs, "pick": pick,
                           "match": {k: v for k, v in m.items() if k not in ("books", "warnings")},   # ไว้แสดงการ์ดเดิมในหน้าบันทึกผล
                           "warns": list(warns or [])})
@@ -2170,6 +2201,18 @@ def consolidate_books(m):
     """รวมราคาหลายโบรกเกอร์เป็นราคาเดียว: เรต = ค่าฐานนิยม, ค่าน้ำ/ราคา = มัธยฐานของโบรกเกอร์ที่ใช้เรตเดียวกัน"""
     books = [b for b in (m.get("books") or []) if isinstance(b, dict)]
     w = []
+    conv = set()
+    for b in books:                                   # ค่าน้ำที่เห็นเป็น decimal (> 1.5) -> แปลงเป็นแบบฮ่องกงก่อนรวม (กันค่ากลาง/ราคาดีที่สุดเพี้ยน)
+        for key, ks in (("hdp", ("home_water", "away_water")), ("ou", ("over", "under"))):
+            for t in ("open", "current"):
+                row = (b.get(key) or {}).get(t) if isinstance(b.get(key), dict) else None
+                if isinstance(row, dict):
+                    for k in ks:
+                        if _num(row.get(k)) and row[k] > 1.5:
+                            row[k] = round(row[k] - 1, 3)
+                            conv.add(str(b.get("name", "?")))
+    if conv:
+        w.append("ค่าน้ำของ " + ", ".join(sorted(conv)) + " ดูเหมือน decimal จึงลบ 1 ให้อัตโนมัติก่อนรวมราคา")
     xs = [b["x12"] for b in books if isinstance(b.get("x12"), dict)
           and all(isinstance(b["x12"].get(t), list) and len(b["x12"][t]) == 3 and all(_num(v) for v in b["x12"][t])
                   for t in ("open", "current"))]
@@ -2413,7 +2456,7 @@ def research_context(home, away, league, model, api_key, today=None):
     if not str(model).lower().startswith("gemini"):
         sys.exit(f"รองรับเฉพาะโมเดล Gemini (ได้รับ '{model}')")
     prompt = (RESEARCH_PROMPT.replace("@HOME@", str(home)).replace("@AWAY@", str(away))
-              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or time.strftime("%Y-%m-%d")))
+              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or now_th("%Y-%m-%d")))
     data = _post_json(GEMINI_URL.format(model=model),
                       {"content-type": "application/json", "x-goog-api-key": api_key},
                       {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -2554,7 +2597,7 @@ def research_team_news(home, away, league, model, api_key, today=None):
     if not str(model).lower().startswith("gemini"):
         sys.exit(f"รองรับเฉพาะโมเดล Gemini (ได้รับ '{model}')")
     prompt = (TEAM_NEWS_PROMPT.replace("@HOME@", str(home)).replace("@AWAY@", str(away))
-              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or time.strftime("%Y-%m-%d")))
+              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or now_th("%Y-%m-%d")))
     data = _post_json(GEMINI_URL.format(model=model),
                       {"content-type": "application/json", "x-goog-api-key": api_key},
                       {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -2606,7 +2649,7 @@ def _age_days(as_of, ref):
 def validate_team_news(raw, sources, queries=None, today=None, home=None, away=None):
     """ตรวจผลค้นข้อมูลทีมทุกค่า: มีแหล่ง + แหล่งตรงกับผลค้นหาจริง + ช่วงค่าสมเหตุสมผล + ไม่เก่าเกิน
     คืน dict ที่ทุกรายการมี status: ok | unverified | stale | invalid | none  (ใช้คำนวณได้เฉพาะ ok)"""
-    ref = _date(today) or _dt_mod.date.today()
+    ref = _date(today) or _dt_mod.datetime.now(TZ_TH).date()
     grounded = set()
     for s_ in sources or []:
         for txt in (s_.get("title"), s_.get("uri")):
@@ -2941,7 +2984,7 @@ def cmd_images(a):
         c["type"] = a.league_type
     if a.desperation:
         c["desperation"] = a.desperation
-    m["id"] = a.match_id or slug(f"{m['home']}-vs-{m['away']}-{time.strftime('%Y%m%d-%H%M')}")
+    m["id"] = a.match_id or slug(f"{m['home']}-vs-{m['away']}-{now_th('%Y%m%d-%H%M')}")
 
     out = a.save_json or os.path.join(a.data_dir, f"extracted_{m['id']}.json")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
@@ -2979,7 +3022,7 @@ def do_settle(store, rec, hg, ag):
     new = discover_rules(store, verbose=False)
     store.state["meta"]["settled"] = store.state["meta"].get("settled", 0) + 1
     rec["settle_seq"] = store.state["meta"]["settled"]
-    rec["settled_at"] = time.strftime("%Y-%m-%d %H:%M")
+    rec["settled_at"] = now_th("%Y-%m-%d %H:%M")
     store.save()
     return outcomes, r, pf, changes, new
 
@@ -3043,6 +3086,8 @@ def rebuild_learning(store):
             rec.update(pick_r=r_, pick_profit=round(profit(halves, pk["price_win"]), 4), role_r=role_outcomes(rec, outcomes))
             if pk.get("best"):
                 rec["pick_profit_best"] = round(profit(halves, pk["best"]["price"]), 4)
+            elif "pick_profit_best" in rec:
+                rec["pick_profit_best"] = rec["pick_profit"]
             update_weights(store, rec, outcomes)
             rec["life_changes"] = lifecycle_update(store, rec["features"], outcomes)
             discover_rules(store, verbose=False)
@@ -3068,7 +3113,7 @@ def edit_result(store, rid, hg, ag):
     old_w, old_rules = dict(store.state[weight_key(store)]), len(store.state["learned_rules"])
     rec["score"] = [int(hg), int(ag)]
     rec["edits"] = rec.get("edits", 0) + 1
-    rec["edited_at"] = time.strftime("%Y-%m-%d %H:%M")
+    rec["edited_at"] = now_th("%Y-%m-%d %H:%M")
     n = rebuild_learning(store)
     store.save()
     return {"old": old, "new": {"score": rec["score"], "r": rec["pick_r"], "profit": rec["pick_profit"]},
@@ -3083,7 +3128,7 @@ def revert_result(store, rid):
         raise ValueError("ไม่พบรายการที่บันทึกผลแล้ว")
     old_w, old_rules = dict(store.state[weight_key(store)]), len(store.state["learned_rules"])
     rec["status"] = "pending"
-    for k in ("score", "pick_r", "pick_profit", "role_r", "settle_seq", "settled_at"):
+    for k in ("score", "pick_r", "pick_profit", "pick_profit_best", "role_r", "settle_seq", "settled_at", "life_changes"):
         rec.pop(k, None)
     n = rebuild_learning(store)
     store.save()
