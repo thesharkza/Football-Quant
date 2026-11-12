@@ -229,6 +229,18 @@ RUNTIME_CSS = r"""
 .s-result .sc { font-size:2.6rem; font-weight:900; letter-spacing:.04em; margin:6px 0; }
 .s-result .vd { font-size:1.4rem; font-weight:900; }
 
+/* ---------- สกอร์ ---------- */
+.s-heat { display:grid; grid-template-columns:34px repeat(6, minmax(0,1fr)); gap:4px; font-size:.78rem; }
+.s-heat .ax { display:grid; place-items:center; color:var(--mut); font-size:.7rem; font-weight:700; }
+.s-heat .c { aspect-ratio:1.25; border-radius:8px; display:grid; place-items:center; font-weight:700; font-size:.74rem;
+  background:rgba(20,184,166,var(--a)); color:var(--fg,#cfe9e5); border:1px solid rgba(255,255,255,.05); }
+.s-heat .c.top { outline:2px solid #fbbf24; outline-offset:-2px; }
+.s-heat .c small { display:block; font-size:.62rem; font-weight:500; opacity:.75; }
+.s-sc3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.s-sc3 > div { text-align:center; padding:12px 6px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid var(--line); }
+.s-sc3 .v { font-size:1.6rem; font-weight:900; letter-spacing:.04em; } .s-sc3 .t { font-size:.72rem; color:var(--mut); overflow-wrap:anywhere; }
+.s-pick .sc { margin-top:10px; font-size:.85rem; opacity:.9; }
+
 /* ---------- tooltip ---------- */
 .s-tipbox { position:fixed; z-index:50; display:none; max-width:280px; padding:8px 11px; border-radius:10px; pointer-events:none;
   background:#0f172a; border:1px solid rgba(148,163,184,.35); color:#e2e8f0; font-size:.78rem; line-height:1.45;
@@ -245,6 +257,8 @@ RUNTIME_CSS = r"""
   .s-tug { grid-template-columns:70px 1fr 1fr 70px; gap:5px; } .s-tug .sd b { font-size:.98rem; }
   .s-rule { grid-template-columns:4px minmax(0,1fr) 74px; gap:9px; }
   .s-prob { grid-template-columns:60px 1fr 52px; }
+  .s-heat { grid-template-columns:24px repeat(6, minmax(0,1fr)); gap:3px; } .s-heat .c small { display:none; }
+  .s-sc3 .v { font-size:1.3rem; }
 }
 """
 
