@@ -1640,7 +1640,7 @@ def render_report(m, f, contribs, pick, store):
     return "\n".join(L)
 
 
-_ST_TH = {"ok": "", "unverified": "ไม่ยืนยันแหล่ง", "stale": "ข้อมูลเก่า", "invalid": "ค่าผิดปกติ"}
+_ST_TH = {"ok": "", "reported": "AI รายงาน รอยืนยัน", "unverified": "ไม่ยืนยันแหล่ง", "stale": "ข้อมูลเก่า", "invalid": "ค่าผิดปกติ"}
 INJ_TH = {"out": "ไม่ได้ลง", "doubtful": "ไม่แน่", "suspended": "โดนแบน"}
 ROLE_TH_TN = {"starter": "ตัวจริง", "rotation": "สำรอง", "unknown": "ไม่ทราบบทบาท"}
 
@@ -1682,7 +1682,7 @@ def team_news_lines(m):
         if r.get("status", "none") == "none" or r.get("days") is None:
             L.append(f"  • วันพัก {names[side]}: ไม่มีข้อมูล")
         else:
-            flag = "  ⚠ ไม่ยืนยันแหล่ง" if r["status"] != "ok" else ""
+            flag = "  ⚠ AI รายงาน รอยืนยัน" if r["status"] != "ok" else ""
             L.append(f"  • วันพัก {names[side]}: {r['days']} วัน (นัดก่อน {r['last_date']} {r.get('competition') or ''}){flag}")
     c = tn.get("cup") or {}
     if c.get("is_cup"):
@@ -2461,31 +2461,92 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
  "evidence":["..."],"confidence":"medium"}"""
 
 
-def research_context(home, away, league, model, api_key, today=None):
-    """ให้ Gemini ค้นหาข้อมูลจริงผ่าน Google Search เพื่อกำหนดบริบทแมตช์ คืน (dict ผลวิจัย, แหล่งข้อมูล, คำค้น)"""
+INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+
+
+def _walk_interaction(node, acc, depth=0):
+    """ไล่อ่านคำตอบของ Interactions API แบบทนต่อโครงสร้างที่ต่างกัน: เก็บข้อความคำตอบ, คำค้น, และแหล่งอ้างอิง"""
+    if depth > 12:
+        return
+    if isinstance(node, list):
+        for x in node:
+            _walk_interaction(x, acc, depth + 1)
+        return
+    if not isinstance(node, dict):
+        return
+    t = node.get("type")
+    if t in ("thought", "google_search_result"):          # ไม่เอาความคิดภายใน/HTML คำแนะนำการค้น
+        return
+    if t == "google_search_call":
+        acc["searched"] = True
+        qs = (node.get("arguments") or {}).get("queries") if isinstance(node.get("arguments"), dict) else None
+        acc["queries"] += [str(x) for x in (qs or []) if x]
+        return
+    if t == "text" and isinstance(node.get("text"), str):
+        acc["text"].append(node["text"])
+    for an in node.get("annotations") or []:
+        if isinstance(an, dict) and an.get("url"):
+            acc["sources"].append({"title": str(an.get("title") or ""), "uri": str(an["url"])})
+    for k, v in node.items():
+        if k not in ("annotations", "arguments") and isinstance(v, (list, dict)):
+            _walk_interaction(v, acc, depth + 1)
+
+
+def _uniq_sources(src):
+    out, seen = [], set()
+    for x in src:
+        key = x.get("title") or x.get("uri")
+        if key and key not in seen:
+            seen.add(key)
+            out.append(x)
+    return out
+
+
+def gemini_search(prompt, model, api_key, max_tokens=4096, temperature=None):
+    """ถาม Gemini พร้อม Google Search คืน {"text", "sources", "queries", "searched", "api"}
+    searched = True เมื่อ API ยืนยันว่ามีการค้นเว็บจริง (เห็นขั้นตอนค้นหา/คำค้น/แหล่งอ้างอิง) · False = ไม่มีหลักฐานการค้นกลับมา
+    ใช้ Interactions API ก่อน (ส่งหลักฐานการค้นกลับมาครบกว่า) ถ้าใช้ไม่ได้จึงถอยไปใช้ generateContent แบบเดิม"""
     if not str(model).lower().startswith("gemini"):
         sys.exit(f"รองรับเฉพาะโมเดล Gemini (ได้รับ '{model}')")
-    prompt = (RESEARCH_PROMPT.replace("@HOME@", str(home)).replace("@AWAY@", str(away))
-              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or now_th("%Y-%m-%d")))
-    data = _post_json(GEMINI_URL.format(model=model),
-                      {"content-type": "application/json", "x-goog-api-key": api_key},
+    hdr = {"content-type": "application/json", "x-goog-api-key": api_key}
+    try:
+        data = _post_json(INTERACTIONS_URL, hdr, {"model": model, "input": prompt, "tools": [{"type": "google_search"}]}, tries=2)
+        acc = {"text": [], "sources": [], "queries": [], "searched": False}
+        _walk_interaction(data.get("steps") if isinstance(data, dict) and data.get("steps") is not None else data, acc)
+        text = "".join(acc["text"]).strip()
+        if text:
+            src = _uniq_sources(acc["sources"])
+            return {"text": text, "sources": src, "queries": acc["queries"], "api": "interactions",
+                    "searched": bool(acc["searched"] or src)}
+    except (SystemExit, Exception):  # noqa  (รุ่น/บัญชีที่ยังใช้ช่องทางใหม่ไม่ได้ -> ใช้ช่องทางเดิม)
+        pass
+    gen = {"maxOutputTokens": max_tokens}
+    if temperature is not None:
+        gen["temperature"] = temperature
+    data = _post_json(GEMINI_URL.format(model=model), hdr,
                       {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                       "tools": [{"google_search": {}}],
-                       "generationConfig": {"maxOutputTokens": 4096}})
+                       "tools": [{"google_search": {}}], "generationConfig": gen})
     cands = data.get("candidates") or []
     if not cands:
         sys.exit("Gemini ไม่ส่งผลการค้นหากลับมา")
     cand = cands[0]
     text = "".join(pt.get("text", "") for pt in cand.get("content", {}).get("parts", []) if not pt.get("thought"))
     gm = cand.get("groundingMetadata") or {}
-    sources, seen = [], set()
-    for ch in gm.get("groundingChunks") or []:
-        web = ch.get("web") or {}
-        key = web.get("title") or web.get("uri")
-        if key and key not in seen:
-            seen.add(key)
-            sources.append({"title": web.get("title") or "", "uri": web.get("uri") or ""})
-    return parse_json_reply(text), sources, list(gm.get("webSearchQueries") or [])
+    src = _uniq_sources([{"title": (ch.get("web") or {}).get("title") or "", "uri": (ch.get("web") or {}).get("uri") or ""}
+                         for ch in gm.get("groundingChunks") or []])
+    qs = list(gm.get("webSearchQueries") or [])
+    return {"text": text, "sources": src, "queries": qs, "api": "generateContent", "searched": bool(src or qs)}
+
+
+def research_context(home, away, league, model, api_key, today=None):
+    """ให้ Gemini ค้นหาข้อมูลจริงผ่าน Google Search เพื่อกำหนดบริบทแมตช์ คืน (dict ผลวิจัย, แหล่งข้อมูล, คำค้น)"""
+    prompt = (RESEARCH_PROMPT.replace("@HOME@", str(home)).replace("@AWAY@", str(away))
+              .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or now_th("%Y-%m-%d")))
+    r = gemini_search(prompt, model, api_key, 4096)
+    out = parse_json_reply(r["text"])
+    if isinstance(out, dict):
+        out["_search"] = {"api": r["api"], "searched": r["searched"]}
+    return out, r["sources"], r["queries"]
 
 
 def _bool(v):
@@ -2547,7 +2608,7 @@ def apply_research(m, r, sources=None, queries=None):
                      "derby_reason": r.get("derby_reason"), "desperation_reason": mo.get("reason"),
                      "avg_goals": lg.get("avg_goals_per_match") if _num(lg.get("avg_goals_per_match")) else None,
                      "draw_rate": lg.get("draw_rate_pct") if _num(lg.get("draw_rate_pct")) else None,
-                     "competition": comp.get("name")}
+                     "competition": comp.get("name"), "search": r.get("_search")}
     return m
 
 
@@ -2603,30 +2664,15 @@ TN_MAX_AGE = {"xg": 30, "injury": 10, "news": 14}       # อายุข้อ�
 
 
 def research_team_news(home, away, league, model, api_key, today=None):
-    """ค้นข้อมูลทีมด้วย Gemini + Google Search คืน (ผลดิบ, แหล่งข้อมูลจริงจาก grounding, คำค้น)"""
-    if not str(model).lower().startswith("gemini"):
-        sys.exit(f"รองรับเฉพาะโมเดล Gemini (ได้รับ '{model}')")
+    """ค้นข้อมูลทีมด้วย Gemini + Google Search คืน (ผลดิบ, แหล่งข้อมูลจริง, คำค้น)
+    หลักฐานว่ามีการค้นจริงหรือไม่แนบไปในผลดิบที่คีย์ "_search" (validate_team_news นำไปใช้ตรวจ)"""
     prompt = (TEAM_NEWS_PROMPT.replace("@HOME@", str(home)).replace("@AWAY@", str(away))
               .replace("@LEAGUE@", str(league or "ไม่ระบุ")).replace("@TODAY@", today or now_th("%Y-%m-%d")))
-    data = _post_json(GEMINI_URL.format(model=model),
-                      {"content-type": "application/json", "x-goog-api-key": api_key},
-                      {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                       "tools": [{"google_search": {}}],
-                       "generationConfig": {"maxOutputTokens": 6144, "temperature": 0}})
-    cands = data.get("candidates") or []
-    if not cands:
-        sys.exit("Gemini ไม่ส่งผลการค้นข้อมูลทีมกลับมา")
-    cand = cands[0]
-    text = "".join(pt.get("text", "") for pt in cand.get("content", {}).get("parts", []) if not pt.get("thought"))
-    gm = cand.get("groundingMetadata") or {}
-    sources, seen = [], set()
-    for ch in gm.get("groundingChunks") or []:
-        web = ch.get("web") or {}
-        key = web.get("title") or web.get("uri")
-        if key and key not in seen:
-            seen.add(key)
-            sources.append({"title": web.get("title") or "", "uri": web.get("uri") or ""})
-    return parse_json_reply(text), sources, list(gm.get("webSearchQueries") or [])
+    r = gemini_search(prompt, model, api_key, 6144, temperature=0)
+    out = parse_json_reply(r["text"])
+    if isinstance(out, dict):
+        out["_search"] = {"api": r["api"], "searched": r["searched"]}
+    return out, r["sources"], r["queries"]
 
 
 def _domain(s):
@@ -2658,7 +2704,9 @@ def _age_days(as_of, ref):
 
 def validate_team_news(raw, sources, queries=None, today=None, home=None, away=None):
     """ตรวจผลค้นข้อมูลทีมทุกค่า: มีแหล่ง + แหล่งตรงกับผลค้นหาจริง + ช่วงค่าสมเหตุสมผล + ไม่เก่าเกิน
-    คืน dict ที่ทุกรายการมี status: ok | unverified | stale | invalid | none  (ใช้คำนวณได้เฉพาะ ok)"""
+    ระดับหลักฐาน:  ok = แหล่งที่อ้างตรงกับแหล่งที่ Google ส่งกลับมา (ใช้คำนวณได้)
+                   reported = API ยืนยันว่ามีการค้นเว็บจริง แต่จับคู่แหล่งรายรายการไม่ได้ (แสดงพร้อมป้าย ไม่ใช้คำนวณ)
+                   unverified = ไม่มีหลักฐานการค้น/ไม่ระบุแหล่ง-วันที่ (ไม่แสดงค่า) · stale | invalid | none"""
     ref = _date(today) or _dt_mod.datetime.now(TZ_TH).date()
     grounded = set()
     for s_ in sources or []:
@@ -2668,10 +2716,14 @@ def validate_team_news(raw, sources, queries=None, today=None, home=None, away=N
                 if d_ and "vertexaisearch" not in d_ and "googleapis" not in d_:
                     grounded.add(d_)
     r = raw if isinstance(raw, dict) else {}
+    se = r.get("_search") if isinstance(r.get("_search"), dict) else {}
+    searched = bool(se.get("searched") or grounded or queries)       # มีหลักฐานจาก API ว่าค้นเว็บจริง
     out = {"searched_at": ref.isoformat(), "grounded": sorted(grounded), "sources": (sources or [])[:12],
-           "queries": (queries or [])[:8], "missing": [], "problems": []}
-    if not grounded:
-        out["problems"].append("Gemini ไม่ได้ค้นเว็บจริงในครั้งนี้ (ไม่มีแหล่งอ้างอิง) — ไม่นำข้อมูลทีมใดๆ ไปใช้")
+           "queries": (queries or [])[:8], "missing": [], "problems": [], "searched": searched, "api": se.get("api")}
+    if not searched:
+        out["problems"].append("Gemini ไม่ส่งหลักฐานการค้นเว็บกลับมาในครั้งนี้ จึงยืนยันไม่ได้ว่าข้อมูลมาจากการค้นจริง — ไม่แสดงและไม่นำข้อมูลทีมไปใช้")
+    elif not grounded:
+        out["problems"].append("Gemini ค้นเว็บจริง แต่ไม่ส่งรายชื่อแหล่งรายรายการกลับมา — แสดงข้อมูลพร้อมป้าย “AI รายงาน” และยังไม่นำไปคำนวณ")
     names = {"home": home or "เจ้าบ้าน", "away": away or "ทีมเยือน"}
 
     def stamp(item, kind):
@@ -2679,14 +2731,16 @@ def validate_team_news(raw, sources, queries=None, today=None, home=None, away=N
         age = _age_days(item.get("as_of"), ref)
         if not d:
             return "unverified", "ไม่ระบุแหล่งข้อมูล", d, age
-        if not ok:
-            return "unverified", f"แหล่ง {d} ไม่อยู่ในผลค้นหาจริง", d, age
+        if not ok and not searched:
+            return "unverified", "ไม่มีหลักฐานว่าค้นเว็บจริง", d, age
         if age is None:
             return "unverified", "ไม่ระบุวันที่ของข้อมูล", d, age
         if age < -2:
             return "invalid", "วันที่ของข้อมูลอยู่ในอนาคต", d, age
         if age > TN_MAX_AGE[kind]:
             return "stale", f"ข้อมูลเก่า {age} วัน (เกิน {TN_MAX_AGE[kind]} วัน)", d, age
+        if not ok:
+            return "reported", f"AI รายงานจาก {d} (ระบบยืนยันแหล่งรายรายการไม่ได้)", d, age
         return "ok", None, d, age
 
     # วันแข่ง
@@ -2732,8 +2786,8 @@ def validate_team_news(raw, sources, queries=None, today=None, home=None, away=N
                         "position": it.get("position") if it.get("position") in ("GK", "DF", "MF", "FW") else "unknown",
                         "source": d, "as_of": it.get("as_of"), "st": st_, "why": why})
         out["injuries"][side] = lst
-        checked = chk.get(side) is True and bool(grounded)
-        out["injuries_checked"][side] = checked or any(x["st"] == "ok" for x in lst)
+        checked = chk.get(side) is True and searched
+        out["injuries_checked"][side] = checked or any(x["st"] in ("ok", "reported") for x in lst)
         if not out["injuries_checked"][side]:
             out["missing"].append(f"ไม่มีรายงานข่าวทีม/ตัวเจ็บของ {names[side]}")
 
@@ -2764,7 +2818,7 @@ def validate_team_news(raw, sources, queries=None, today=None, home=None, away=N
             continue
         d, ok = _src_check(it.get("source"), grounded)
         days = (kick - ld).days
-        st_ = "ok" if ok and 1 <= days <= 60 else ("invalid" if not 1 <= days <= 60 else "unverified")
+        st_ = "invalid" if not 1 <= days <= 60 else ("ok" if ok else "reported" if (searched and d) else "unverified")
         out["rest"][side] = {"days": days if 1 <= days <= 60 else None, "last_date": ld.isoformat(),
                              "competition": str(it.get("competition") or "")[:40] or None, "source": d, "status": st_}
 
