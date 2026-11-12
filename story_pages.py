@@ -414,7 +414,11 @@ def _ch_team(m, f):
     ok_n += sum(1 for s in ("home", "away") for p in (tn.get("injuries") or {}).get(s, []) if p.get("st") == "ok")
     ok_n += sum(1 for s in ("home", "away") if ((tn.get("rest") or {}).get(s) or {}).get("status") == "ok")
     miss = (tn.get("problems") or []) + (tn.get("missing") or [])
-    lead = (f'ยืนยันได้ <b>{ok_n}</b> รายการ จากแหล่งที่ค้นเจอจริง <b>{len(tn.get("grounded") or [])}</b> เว็บ'
+    rep_n = sum(1 for s in ("home", "away") if (xg.get(s) or {}).get("status") == "reported")
+    rep_n += sum(1 for s in ("home", "away") for p in (tn.get("injuries") or {}).get(s, []) if p.get("st") == "reported")
+    rep_n += sum(1 for s in ("home", "away") if ((tn.get("rest") or {}).get(s) or {}).get("status") == "reported")
+    lead = (f'ยืนยันแหล่งได้ <b>{ok_n}</b> รายการ'
+            + (f' · AI รายงานหลังค้นเว็บแต่รอยืนยัน <b>{rep_n}</b> รายการ (ตรวจเองก่อนใช้)' if rep_n else "")
             + (f' · ไม่มีข้อมูลหรือไม่นำไปใช้ <b>{len(miss)}</b> รายการ' if miss else "")
             + ' · ระบบไม่เดาค่าที่หาไม่เจอ และค่าเหล่านี้ยังไม่มีผลต่อการฟันธง')
     na = '<span class="s-mut" style="font-style:italic">ไม่มีข้อมูล</span>'
@@ -437,6 +441,8 @@ def _ch_team(m, f):
         x = xg.get(s) or {}
         if x.get("status") == "ok":
             srcs.append(f'{f[s]}: {x.get("source")} {x.get("as_of") or ""} ({x.get("games") or "?"} นัด)')
+        elif x.get("status") == "reported":
+            srcs.append(f'{f[s]}: AI รายงานจาก {x.get("source")} {x.get("as_of") or ""} — รอยืนยัน ไม่นำไปคำนวณ')
         elif x.get("status") in ("unverified", "invalid"):
             srcs.append(f'{f[s]}: ไม่มีข้อมูลที่ยืนยันได้')
         elif x.get("status") == "stale":
@@ -458,12 +464,13 @@ def _ch_team(m, f):
             body = "".join(
                 f'<div class="s-kv"{tipattr(_src_tip(p))}>'
                 f'<span>{"★ " if p.get("role") == "starter" else ""}{e(p["player"])} <span class="s-xs s-mut">{e(p.get("position"))} · {ROLE.get(p.get("role"), "")}</span></span>'
-                f'{chip(*INJ.get(p.get("status"), ("?", "off")))}{" " + chip("ข้อมูลเก่า", "warn") if p.get("st") == "stale" else ""}</div>' for p in lst)
+                f'{chip(*INJ.get(p.get("status"), ("?", "off")))}{" " + chip("ข้อมูลเก่า", "warn") if p.get("st") == "stale" else ""}'
+                f'{" " + chip("AI รายงาน", "warn") if p.get("st") == "reported" else ""}</div>' for p in lst)
         else:
             body = ('<div class="s-up s-sm">ไม่พบรายงานตัวเจ็บ/แบน</div>' if (tn.get("injuries_checked") or {}).get(s) else na)
         r = (tn.get("rest") or {}).get(s) or {}
-        if r.get("days") is not None and r.get("status") == "ok":
-            body += (f'<div class="s-kv" style="margin-top:6px"><span>พักมาแล้ว</span><b class="{"s-warn" if r["days"] <= 3 else ""}">{num(r["days"], 0)} วัน</b></div>'
+        if r.get("days") is not None and r.get("status") in ("ok", "reported"):
+            body += (f'<div class="s-kv" style="margin-top:6px"><span>พักมาแล้ว{" (AI รายงาน)" if r["status"] == "reported" else ""}</span><b class="{"s-warn" if r["days"] <= 3 else ""}">{num(r["days"], 0)} วัน</b></div>'
                      f'<div class="s-xs s-mut">นัดก่อน {e(r.get("last_date"))} {e(r.get("competition") or "")}</div>')
         else:
             body += f'<div class="s-kv" style="margin-top:6px"><span>พักมาแล้ว</span>{na}</div>'
@@ -498,7 +505,9 @@ def _ch_team(m, f):
     if srcl:
         ob += ('<div class="s-note">แหล่งที่ค้นเจอ: ' + " · ".join(
             f'<a href="{e(x["uri"])}" target="_blank" rel="noopener">{e(x.get("title") or "ลิงก์")}</a>' for x in srcl) + "</div>")
-    cards += card("บริบทเพิ่มเติม", ob, chip(f"แหล่งยืนยัน {len(tn.get('grounded') or [])} เว็บ", "ok" if tn.get("grounded") else "bad"), dl=.2)
+    ev = (chip(f"แหล่งยืนยัน {len(tn.get('grounded') or [])} เว็บ", "ok") if tn.get("grounded")
+          else chip("ค้นเว็บจริง · ไม่มีรายชื่อแหล่ง", "warn") if tn.get("searched") else chip("ไม่มีหลักฐานการค้น", "bad"))
+    cards += card("บริบทเพิ่มเติม", ob, ev, dl=.2)
     return chapter("ch-team", "@N@", kick, title, lead, f'<div class="s-grid">{cards}</div>')
 
 
