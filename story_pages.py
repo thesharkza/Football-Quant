@@ -52,7 +52,7 @@ def _seq_count(seq):
 # ============================================================================ หน้าผลวิเคราะห์
 def analysis_story(res, nav=True):
     m, f, contribs, pick = res["m"], res["f"], res["contribs"] or [], res["pick"]
-    chs = [("ch-market", "ตลาด", _ch_market(f)), ("ch-flow", "เงินไหล", _ch_flow(f)),
+    chs = [("ch-market", "ตลาด", _ch_market(f)), ("ch-flow", "เงินไหล", _ch_flow(f)), ("ch-score", "สกอร์", _ch_score(f)),
            ("ch-rules", "Rule", _ch_rules(f, contribs, pick)), ("ch-form", "ฟอร์ม", _ch_form(m, f)),
            ("ch-team", "ข้อมูลทีม", _ch_team(m, f)), ("ch-check", "ตรวจสอบ", _ch_check(res)),
            ("ch-sum", "สรุป", _ch_summary(f, contribs, pick))]
@@ -108,6 +108,10 @@ def _hero(m, f, pick):
     ru = [r for r in (pick.get("runner_up") or []) if r[1] > 0.05][:1]
     if ru:
         extra += f'<div class="s-sm" style="margin-top:8px;opacity:.8">ทางเลือกรอง: {e(mth(ru[0][0], f))} ({ru[0][1]:.2f})</div>'
+    sm = f.get("score_model")
+    if sm:
+        extra += (f'<div class="sc">🔢 ประตูคาดหมาย {sm["lh"]:.2f} – {sm["la"]:.2f} · สกอร์ที่น่าจะเป็น '
+                  + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:3]) + "</div>")
     pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"⏭ ข้ามไม้นี้ · ติดตามเป็นไม้เงา" if skip else "สัญญาณฟันธงเดี่ยว · ราคาปัจจุบัน"}</div>'
           f'<div class="lb">{e(pick["label"])}</div>'
           f'<div class="row"><div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
@@ -116,6 +120,76 @@ def _hero(m, f, pick):
     return (f'<div class="s-hero s-rv"><div class="comp">{e(comp)}</div><div class="s-vs">{team("home")}<div class="s-vsx">VS</div>{team("away")}</div>'
             f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ระดับสัญญาณจัดจากคะแนนของ Rule (ต่ำ &lt; 1.2 ≤ กลาง &lt; 2.5 ≤ สูง) '
             f'ไม่ใช่โอกาสชนะ · เลื่อนลงเพื่อดูว่าระบบคิดอย่างไรทีละขั้น</div></div>')
+
+
+# ---------------------------------------------------------------------------- บท: สกอร์ที่คาด
+def _ch_score(f):
+    sm = f.get("score_model")
+    kick, title = "บทที่ @N@ · สกอร์ที่คาด", "สกอร์ที่น่าจะเป็นจากราคาตลาด"
+    if not sm:
+        return chapter("ch-score", "@N@", kick, title, "ข้อมูลราคาไม่พอคำนวณสกอร์", "")
+    br = q.best_by_result(sm)
+    t1 = sm["top"][0]
+    lead = (f'ราคาตลาดตอนนี้เทียบเท่ากับ <b>{e(f["home"])}</b> ยิงเฉลี่ย <b>{sm["lh"]:.2f}</b> ประตู และ <b>{e(f["away"])}</b> <b>{sm["la"]:.2f}</b> ประตู '
+            f'(รวม {sm["exp_total"]:.2f}) · สกอร์อันดับ 1 คือ <b>{t1[0]}-{t1[1]}</b> แต่มีโอกาสเพียง <b>{t1[2]:.0%}</b> '
+            f'จึงควรดูเป็น "รูปเกม" มากกว่าทายสกอร์ตรง ๆ')
+    # สกอร์แยกตามผล
+    pr = sm["p"]
+    sc3 = (f'<div class="s-sc3">'
+           f'<div class="s-rv"><div class="t">ถ้า {e(f["home"])} ชนะ ({pr[0]:.0%})</div><div class="v">{br["home"][0]}-{br["home"][1]}</div><div class="t">{br["home"][2]:.1%}</div></div>'
+           f'<div class="s-rv" style="--dl:.1s"><div class="t">ถ้าเสมอ ({pr[1]:.0%})</div><div class="v">{br["draw"][0]}-{br["draw"][1]}</div><div class="t">{br["draw"][2]:.1%}</div></div>'
+           f'<div class="s-rv" style="--dl:.2s"><div class="t">ถ้า {e(f["away"])} ชนะ ({pr[2]:.0%})</div><div class="v">{br["away"][0]}-{br["away"][1]}</div><div class="t">{br["away"][2]:.1%}</div></div></div>')
+    # heatmap
+    g = sm["grid"]
+    mx = max(max(r) for r in g) or 1
+    tops = {(t[0], t[1]) for t in sm["top"][:3]}
+    cells = '<div class="ax"></div>' + "".join(f'<div class="ax">{a}</div>' for a in range(6))
+    for h in range(6):
+        cells += f'<div class="ax">{h}</div>'
+        for a in range(6):
+            v = g[h][a]
+            al = 0.05 + 0.85 * (v / mx)
+            fg = "#04201d" if al > 0.55 else "#cfe9e5"
+            tip = f"{f['home']} {h}-{a} {f['away']}\nโอกาส {v:.1%}"
+            cells += (f'<div class="c s-pop{" top" if (h, a) in tops else ""}" style="--a:{al:.2f};--fg:{fg};--dl:{.02 * (h + a):.2f}s"{tipattr(tip)}>'
+                      f'{h}-{a}<small>{v:.0%}</small></div>')
+    heat = (f'<div class="s-xs s-mut" style="margin-bottom:6px">แถวตั้ง = ประตู {e(f["home"])} · แถวนอน = ประตู {e(f["away"])} · กรอบเหลือง = 3 อันดับแรก</div>'
+            f'<div class="s-heat">{cells}</div>'
+            f'<div class="s-note">สกอร์นอกตาราง (ทีมใดทีมหนึ่งยิง 6+) รวม {sm["outside_5"]:.1%}</div>')
+    rows = "".join(f'<div class="s-brow s-rv" style="--dl:{.06 * i:.2f}s"><span class="l"><b>{h}-{a}</b></span>{bar(p_ / sm["top"][0][2], "t" if i == 0 else "i", dl=.06 * i)}'
+                   f'<span class="n">{p_:.1%}</span></div>' for i, (h, a, p_) in enumerate(sm["top"]))
+    mk = sm["market_p"]
+    fit = (f'<div class="s-note">ตรวจความเข้ากันกับตลาด: แบบจำลอง {pr[0]:.0%}/{pr[1]:.0%}/{pr[2]:.0%} เทียบราคา 1X2 {mk[0]:.0%}/{mk[1]:.0%}/{mk[2]:.0%} '
+           f'(คลาด {sm["rmse"]:.1%}) · ใช้ข้อมูล {sm["inputs"]} ตลาด · แบบจำลอง Dixon-Coles</div>')
+    body = (card("สกอร์ที่น่าจะเป็นที่สุดแยกตามผล", sc3) + '<div class="s-grid" style="margin-top:12px">'
+            + card("แผนที่ความน่าจะเป็นของสกอร์", heat, dl=.05) + card("6 อันดับแรก", rows + fit, dl=.1) + "</div>"
+            + '<div class="s-note s-rv">สกอร์คำนวณจากราคาตลาดเท่านั้น (ไม่ได้ใช้ Rule) และไม่มีผลต่อการฟันธง · จากข้อมูลจริงของระบบ '
+              'สกอร์อันดับ 1 ถูกประมาณ 1 ใน 8 นัด และอยู่ใน 3 อันดับแรกประมาณ 1 ใน 3 นัด</div>')
+    return chapter("ch-score", "@N@", kick, title, lead, body)
+
+
+def score_accuracy_chapter(history, n):
+    a = q.score_accuracy(history)
+    kick, title = f"บทที่ {n} · ทายสกอร์แม่นแค่ไหน", "สกอร์ที่คาดเทียบผลจริง"
+    if not a.get("n"):
+        return chapter("st-score", n, kick, title, "ยังไม่มีผลที่บันทึก", "")
+    N = a["n"]
+    lead = (f'จาก <b>{N}</b> นัดที่บันทึกผล สกอร์อันดับ 1 ถูก <b>{a["top1"]}</b> นัด ({a["top1"] / N:.1%}) '
+            f'ใกล้กับที่แบบจำลองคาดไว้ ({a["exp_top1"]:.1%}) · อยู่ใน 3 อันดับแรก <b>{a["top3"]}</b> นัด ({a["top3"] / N:.1%})')
+    cs = a["common_score"]
+    k = (f'<div class="s-kpis">'
+         f'<div class="s-kpi s-rv"><div class="t">อันดับ 1 ถูก</div><div class="v">{num(a["top1"] / N * 100, 1, suf="%")}</div><div class="d">{a["top1"]}/{N} · แบบจำลองคาด {a["exp_top1"]:.1%}</div></div>'
+         f'<div class="s-kpi s-rv" style="--dl:.08s"><div class="t">อยู่ใน 3 อันดับแรก</div><div class="v">{num(a["top3"] / N * 100, 1, suf="%")}</div><div class="d">{a["top3"]}/{N}</div></div>'
+         f'<div class="s-kpi s-rv" style="--dl:.16s"><div class="t">ประตูรวมคลาดเฉลี่ย</div><div class="v">{num(a["mae_total"], 2)}</div><div class="d">ลูกต่อนัด</div></div></div>')
+    pf = ", ".join(f"{s_[0]}-{s_[1]} ({c} นัด)" for s_, c in a["pred_freq"][:3])
+    notes = [f"สกอร์ที่ออกบ่อยที่สุดในข้อมูลคือ {cs[0]}-{cs[1]} ({a['common_n']} นัด) — ถ้าทาย {cs[0]}-{cs[1]} ทุกนัดจะถูก {a['common_n'] / N:.1%}",
+             f"แบบจำลองเลือกสกอร์อันดับ 1 เป็น: {pf} — สกอร์เสมอ 1-1 มักเป็นอันดับ 1 แม้มีทีมเหนือกว่า เพราะโอกาสชนะกระจายไปหลายสกอร์",
+             "ค่าที่มีประโยชน์จริงคือการกระจายความน่าจะเป็นทั้งตาราง (ประตูคาดหมาย, สกอร์แยกตามผล) มากกว่าสกอร์อันดับ 1 เพียงตัวเดียว"]
+    if a.get("logloss") is not None:
+        notes.append(f"คะแนนความแม่นของการกระจาย (log-loss) {a['logloss']:.2f} — ยิ่งต่ำยิ่งดี")
+    body = k + card("อ่านผลอย่างไร", '<ul class="s-list">' + "".join(f"<li>{e(x)}</li>" for x in notes) + "</ul>", dl=.1).replace(
+        'class="s-card s-rv', 'style="margin-top:12px" class="s-card s-rv', 1)
+    return chapter("st-score", n, kick, title, lead, body)
 
 
 # ---------------------------------------------------------------------------- บท 1: ตลาดคาดอะไร
@@ -619,6 +693,7 @@ def stats_story(state, history, params):
     # 4 คะแนนเชื่อได้แค่ไหน
     if len(done) >= 10:
         chs.append(("st-ladder", "คะแนน", _ladder_chapter(done, be, len(chs) + 1)))
+    chs.append(("st-score", "สกอร์", score_accuracy_chapter(history, len(chs) + 1)))
     # 5 Rule
     chs.append(("st-life", "Rule", lifecycle_chapter(state, params, len(chs) + 1)))
     # 6 น้ำหนัก
