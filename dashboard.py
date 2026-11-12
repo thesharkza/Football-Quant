@@ -397,7 +397,7 @@ def _src(d, as_of=None):
 def _flag(st, why):
     if st == "ok":
         return ""
-    lb = {"unverified": "ไม่ยืนยันแหล่ง", "stale": "ข้อมูลเก่า", "invalid": "ค่าผิดปกติ"}.get(st, st)
+    lb = {"reported": "AI รายงาน รอยืนยัน", "unverified": "ไม่ยืนยันแหล่ง", "stale": "ข้อมูลเก่า", "invalid": "ค่าผิดปกติ"}.get(st, st)
     return " " + _chip(f"{lb} · ไม่นำไปใช้", "warn") + (f' <span class="src">{e(why)}</span>' if why else "")
 
 
