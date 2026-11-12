@@ -79,10 +79,10 @@ DEFAULT_PARAMS = {
     "universal_cov": 0.85,
     # --- วงจรชีวิตของ Rule ที่ระบบสร้างเอง/Rule ทดลอง: เงา -> ปลดล็อค -> ถอด ---
     "unlock_wr": 0.65,           # อัตราชนะนอกกลุ่มตัวอย่าง (out-of-sample) ขั้นต่ำเพื่อปลดล็อคทางลัด
-    "unlock_min_n": 30,          # จำนวนครั้งขั้นต่ำของทางลัด
+    "unlock_min_n": 40,          # จำนวนครั้งขั้นต่ำของทางลัด (เดิม 30: Rule ที่ไม่มีประโยชน์หลุดผ่านได้ ~9% ต่อข้อ)
     "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
     "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
-    "lb_z_fast": 1.28, "lb_z_judge": 1.645,
+    "lb_z_fast": 1.96, "lb_z_judge": 1.645,          # ทางลัดใช้ความเชื่อมั่น 95% (เดิม 1.28 = 80%)
     "retire_min_n": 20,          # ใช้ครบเท่านี้แล้วอัตราชนะต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ถอด
     "decline_window": 10,        # ขนาดช่วงที่ใช้ตรวจว่าอัตราชนะลดลงต่อเนื่อง 3 ช่วง
     # --- สถานะ "ข้าม": ไม้ที่สัญญาณอ่อนหรือขัดกัน ยังคำนวณไม้เงาไว้ติดตามผล แต่ไม่นับเป็นไม้ที่เล่น ---
@@ -960,6 +960,10 @@ EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": e
                 "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
 
 
+for _rid in ("R28", "R31"):                       # Rule ทดลองที่มี 2 ตลาด
+    RULE_NAMES.setdefault(_rid + "b", RULE_NAMES.get(_rid, _rid) + " (ส่วนที่ 2: สูง/ต่ำ)")
+
+
 def _wilson_lo(w, n, z):
     return wilson(w / n, n, z)[0] if n else 0.0
 
@@ -1078,8 +1082,14 @@ def candidates_for(f, P, store, contribs=None):
                 r = None
             if r and r.get("rec"):
                 mk = r["rec"][0][0]
-                out[rid] = {"kind": "manual", "market": mk, "role": market_role(mk, f), "rec": r["rec"], "veto": r.get("veto", []),
+                out[rid] = {"kind": "manual", "market": mk, "role": market_role(mk, f), "rec": r["rec"][:1], "veto": r.get("veto", []),
                             "flow_only": r.get("flow_only", False), "note": r["note"]}
+                # Rule ที่แนะนำมากกว่า 1 ตลาด: ตลาดถัดไปถูกติดตามผล/ปลดล็อคแยกกัน (เดิมถูกตัดสินจากตลาดแรกอย่างเดียว)
+                for i, (mk2, val2) in enumerate(r["rec"][1:]):
+                    sid = rid + "bcd"[i]
+                    RULE_NAMES.setdefault(sid, RULE_NAMES.get(rid, rid) + " (ส่วนที่ 2: " + ("สูง/ต่ำ" if mk2.startswith("OU") else "แฮนดิแคป") + ")")
+                    out[sid] = {"kind": "manual", "market": mk2, "role": market_role(mk2, f), "rec": [(mk2, val2)], "veto": [],
+                                "flow_only": False, "note": r["note"] + " [ส่วนที่ 2]"}
     return out
 
 
