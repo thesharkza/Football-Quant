@@ -2100,6 +2100,65 @@ def session_revoke(tok):
         SESSIONS.pop(tok, None)
 
 
+# ----------------------------------------------------------------------------
+# งานวิเคราะห์เบื้องหลัง: ทำงานบนเซิร์ฟเวอร์ต่อแม้หน้าเว็บหลุด/สลับแอป (เก็บในหน่วยความจำ 1 ชั่วโมง)
+# ----------------------------------------------------------------------------
+JOBS = {}
+_JOBS_LOCK = _threading.Lock()
+JOB_TTL = 3600
+
+
+def job_new(owner):
+    jid = _secrets.token_urlsafe(9)
+    now = time.time()
+    with _JOBS_LOCK:
+        for k in [k for k, j in JOBS.items() if now - j["started"] > JOB_TTL]:
+            JOBS.pop(k, None)
+        JOBS[jid] = {"id": jid, "owner": owner, "status": "running", "steps": [], "result": None, "error": None,
+                     "started": now, "finished": None}
+    return JOBS[jid]
+
+
+def job_get(jid):
+    j = JOBS.get(jid) if jid else None
+    return j if j and time.time() - j["started"] <= JOB_TTL else None
+
+
+def job_latest(owner, max_age=1800):
+    """งานล่าสุดของผู้ใช้คนนี้ (ใช้กู้คืนเมื่อเปิดหน้าใหม่แล้วลิงก์ไม่มีรหัสงาน)"""
+    if not owner:
+        return None
+    now = time.time()
+    c = [j for j in JOBS.values() if j["owner"] == owner and now - j["started"] <= max_age and not j.get("dismissed")]
+    return max(c, key=lambda j: j["started"]) if c else None
+
+
+def job_start(job, fn, *args):
+    """รัน fn(job, *args) ในเธรดเบื้องหลัง: fn ต้องไม่เรียกคำสั่งแสดงผลของ Streamlit และต้องคืนผลลัพธ์ (dict) หรือ raise"""
+    def run():
+        try:
+            res = fn(job, *args)
+            job["result"] = res
+            job["status"] = "gate" if isinstance(res, dict) and res.get("_gate") else "done"
+        except SystemExit as e:
+            job["error"], job["status"] = str(e.code), "error"
+        except ValueError as e:
+            job["error"], job["status"] = f"อ่านข้อมูลจากรูปได้ไม่ครบ: {e}", "error"
+        except Exception as e:  # noqa
+            job["error"], job["status"] = f"เกิดข้อผิดพลาดที่ไม่คาดคิด: {type(e).__name__}: {str(e)[:200]}", "error"
+        finally:
+            job["finished"] = time.time()
+            cb = job.pop("on_finish", None)
+            if cb:
+                try:
+                    cb(job)
+                except Exception:  # noqa
+                    pass
+    th = _threading.Thread(target=run, name="fq-job-" + job["id"], daemon=True)
+    th.start()
+    return th
+
+
 def record_prediction(store, m, f, contribs, pick, warns=None):
     """บันทึกสัญญาณลงประวัติ (สถานะ pending) คืน (id, บันทึกสำเร็จหรือไม่)"""
     mid = m.get("id") or slug(f"{f['home']}-vs-{f['away']}-{now_th('%Y%m%d-%H%M')}")
