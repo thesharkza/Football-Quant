@@ -302,6 +302,9 @@ st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Fo
             unsafe_allow_html=True)
 ss = st.session_state
 IS_ADMIN = ROLE == "admin"
+if not AUTH_ON and not _pw:
+    st.warning("⚠ ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ (ไม่มี [auth] และไม่มี APP_PASSWORD ใน Secrets) — ทุกคนที่มีลิงก์เข้าใช้ได้เต็มสิทธิ์ Admin "
+               "รวมถึงใช้ API key ของคุณ ถ้าแอปนี้เปิดสาธารณะ ให้ตั้งค่าใน Secrets ทันที")
 if AUTH_ON:
     idle_guard()
     _acc = access.load(DATA_DIR)
@@ -342,7 +345,7 @@ def make_result(m, opts, ext_warn=(), research_err=None, save=True):
     if opts["league_size"] > 0:
         m["league_size"] = opts["league_size"]
     if not m.get("id"):
-        m["id"] = q.slug(f"{m['home']}-vs-{m['away']}-{time.strftime('%Y%m%d-%H%M')}")
+        m["id"] = q.slug(f"{m['home']}-vs-{m['away']}-{q.now_th('%Y%m%d-%H%M')}")
     store = q.Store(DATA_DIR)
     f, contribs, pick = q.analyze_match(m, store)
     saved = None
@@ -530,6 +533,8 @@ with tab1:
                     st.error(f"ข้อมูลไม่ครบ/ไม่ถูกต้อง: {e}")
             if g2.button("✖ ยกเลิก", key="gate_cancel"):
                 ss.pop("gate", None)
+                if AUTH_ON:
+                    access.refund(DATA_DIR, EMAIL, ROLE)      # ไม่ได้ผลวิเคราะห์ -> คืนสิทธิ์
                 st.rerun()
     if ss.get("res"):
         with box:
@@ -720,7 +725,7 @@ with tab4:
         if ss.get("bt"):
             show(SP.backtest_story(ss["bt"]), key="bt")
             st.download_button("⬇ ดาวน์โหลดรายงาน Backtest (HTML แบบเล่าเรื่อง)", SP.backtest_document(ss["bt"]),
-                               file_name=f"backtest_{time.strftime('%Y%m%d')}.html", mime="text/html", key="dl_bt")
+                               file_name=f"backtest_{q.now_th('%Y%m%d')}.html", mime="text/html", key="dl_bt")
 
 # ================================================================ TAB 4
 with tab5:
@@ -768,7 +773,7 @@ with tab5:
         st.caption("ถ้าตั้งทั้ง Google Sheets และ Gist ระบบจะใช้ Google Sheets")
     card("ไฟล์สำรอง (ทางเลือก)", '<div class="muted">ดาวน์โหลดเก็บไว้เองอีกชั้นหนึ่ง หรือใช้กู้คืนข้อมูลจากเครื่องอื่น</div>')
     blob = json.dumps({"state": store.state, "history": store.history}, ensure_ascii=False, indent=1)
-    st.download_button("⬇ ดาวน์โหลดไฟล์สำรอง", blob, file_name=f"quant_backup_{time.strftime('%Y%m%d')}.json",
+    st.download_button("⬇ ดาวน์โหลดไฟล์สำรอง", blob, file_name=f"quant_backup_{q.now_th('%Y%m%d')}.json",
                        mime="application/json")
     up = st.file_uploader("กู้คืนจากไฟล์สำรอง (เขียนทับข้อมูลปัจจุบัน)", type=["json"], key="restore")
     if up is not None and st.button("♻ กู้คืน", type="primary"):
