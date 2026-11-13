@@ -82,6 +82,10 @@ DEFAULT_PARAMS = {
     "unlock_min_n": 40,          # จำนวนครั้งขั้นต่ำของทางลัด (เดิม 30: Rule ที่ไม่มีประโยชน์หลุดผ่านได้ ~9% ต่อข้อ)
     "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
     "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
+    "gate_enabled": True,        # ตัวกรองช่วงคะแนน: งดลงทุนเมื่อประเภทไม้ × ช่วงคะแนนนั้นมีผลที่ผ่านมาต่ำกว่าจุดคุ้มทุนหรือขาดทุน
+    "gate_min_n": 20,            # ต้องมีผลในช่วงนั้นอย่างน้อยกี่ไม้ จึงเริ่มตัดสิน (น้อยกว่านี้ = ลงทุนตามปกติ)
+    "gate_edges": [1.0, 1.5, 2.0, 2.5, 3.0],
+    "lock_unlocks": True,        # ล็อก: Rule ที่ผ่านเกณฑ์ยังไม่ถูกเปิดใช้อัตโนมัติ (คงเป็นเงา ติดป้าย "พร้อมใช้") จนกว่าจะปลดล็อกเอง
     "lb_z_fast": 1.96, "lb_z_judge": 1.645,          # ทางลัดใช้ความเชื่อมั่น 95% (เดิม 1.28 = 80%)
     "retire_min_n": 20,          # ใช้ครบเท่านี้แล้วอัตราชนะต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ถอด
     "decline_window": 10,        # ขนาดช่วงที่ใช้ตรวจว่าอัตราชนะลดลงต่อเนื่อง 3 ช่วง
@@ -1021,6 +1025,15 @@ def lifecycle_update(store, f, outcomes):
                     new, why = "active", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} สูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ"
                 else:
                     new, why = "retired", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} ไม่ดีกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ไม่มีประโยชน์"
+        if new == "active" and old == "shadow" and P.get("lock_unlocks"):
+            if not e.get("ready"):                     # ผ่านเกณฑ์แล้วแต่ล็อกอยู่ -> คงเป็นเงา รอผู้ใช้ปลดล็อก
+                e["ready"], e["ready_at"] = True, seq
+                e["reason"] = why + " — รอเปิดใช้ (ล็อกสถานะ Rule อยู่)"
+            new = old
+        elif old == "shadow" and e.get("ready") and new == "shadow" and not P.get("lock_unlocks"):
+            new, why = "active", "ผ่านเกณฑ์ไว้แล้วระหว่างล็อก เปิดใช้เมื่อปลดล็อก"
+        if new == "retired":
+            e.pop("ready", None)
         if new != old:
             e["status"], e["reason"], e["since"] = new, why, seq
             changes.append((rid, old, new, why))
@@ -1376,7 +1389,93 @@ class Store:
 # 5) Engine: รวมคะแนน + Single Best Pick (Rule 13)
 # ----------------------------------------------------------------------------
 def analyze_match(m, store):
-    return analyze_features(m, build_features(m, store.params), store)
+    f, contribs, pick = analyze_features(m, build_features(m, store.params), store)
+    gate_check(store, f, pick)
+    return f, contribs, pick
+
+
+# ----------------------------------------------------------------------------
+# ตัวกรองช่วงคะแนน (ขั้นสุดท้ายก่อนลงทุน): เทียบไม้ที่ฟันธงกับผลจริงในอดีตของ
+# "ประเภทไม้ (ต่อ/รอง/สูง/ต่ำ) × ช่วงคะแนน" ถ้าช่วงนั้นชนะต่ำกว่าจุดคุ้มทุนหรือขาดทุน -> งดลงทุน (ไม้เงา)
+# สถิตินับจากทุกไม้ที่บันทึกผลแล้ว รวมไม้ที่ถูกงด เพื่อให้ช่วงที่ถูกงดกลับมาผ่านได้ถ้าผลดีขึ้น
+# ----------------------------------------------------------------------------
+GATE_KIND_TH = {"fav": "แฮนดิแคปทีมต่อ", "dog": "แฮนดิแคปทีมรอง", "over": "สูง (Over)", "under": "ต่ำ (Under)"}
+
+
+def gate_kind(f, mk):
+    if str(mk).startswith("HDP"):
+        return "fav" if mk == f.get("fav_hdp") else "dog"
+    if str(mk).startswith("OU"):
+        return "over" if mk == "OU_OVER" else "under"
+    return None
+
+
+def gate_bucket(strength, edges):
+    import bisect
+    return bisect.bisect_right(list(edges), float(strength))
+
+
+def gate_label(i, edges):
+    e = list(edges)
+    if i == 0:
+        return f"< {e[0]:g}"
+    if i >= len(e):
+        return f"≥ {e[-1]:g}"
+    return f"{e[i - 1]:g}–{e[i]:g}"
+
+
+def gate_table(history, P):
+    """สถิติจริงของแต่ละ (ประเภทไม้, ช่วงคะแนน) จากทุกไม้ที่บันทึกผลแล้ว"""
+    edges = P.get("gate_edges") or DEFAULT_PARAMS["gate_edges"]
+    tab = {}
+    for r in history:
+        if r.get("status") != "settled" or "pick_r" not in r:
+            continue
+        k = gate_kind(r["features"], r["pick"]["market"])
+        if k is None:
+            continue
+        key = (k, gate_bucket(r["pick"]["strength"], edges))
+        t = tab.setdefault(key, {"n": 0, "w": 0, "l": 0, "profit": 0.0})
+        t["n"] += 1
+        t["w"] += r["pick_r"] > 0
+        t["l"] += r["pick_r"] < 0
+        t["profit"] += r["pick_profit"]
+    for t in tab.values():
+        dec = t["w"] + t["l"]
+        t["wr"] = t["w"] / dec if dec else None
+    return tab
+
+
+def gate_status(t, P):
+    if not t or t["n"] < P.get("gate_min_n", 20):
+        return "data"
+    if (t["wr"] is not None and t["wr"] < P["breakeven_wr"]) or t["profit"] < 0:
+        return "fail"
+    return "pass"
+
+
+def gate_check(store, f, pick, history=None):
+    """ตัดสินขั้นสุดท้าย: แนบผลตัวกรองไว้ที่ pick["gate"] และงดลงทุน (ข้าม) ถ้าช่วงนั้นไม่ผ่าน"""
+    P = store.params
+    k = gate_kind(f, pick["market"])
+    if k is None:
+        return None
+    edges = P.get("gate_edges") or DEFAULT_PARAMS["gate_edges"]
+    b = gate_bucket(pick["strength"], edges)
+    t = gate_table(store.history if history is None else history, P).get((k, b))
+    stt = gate_status(t, P)
+    g = {"kind": k, "kind_th": GATE_KIND_TH[k], "bucket": b, "label": gate_label(b, edges), "status": stt,
+         "n": t["n"] if t else 0, "w": t["w"] if t else 0, "l": t["l"] if t else 0,
+         "wr": t["wr"] if t else None, "profit": round(t["profit"], 2) if t else 0.0,
+         "enabled": bool(P.get("gate_enabled", True)), "min_n": P.get("gate_min_n", 20)}
+    pick["gate"] = g
+    if stt == "fail" and g["enabled"] and not pick.get("skip"):
+        pick["skip"] = True
+        pick["gate_suspended"] = True
+        pick.setdefault("skip_reasons", []).append(
+            f"ตัวกรองช่วงคะแนน: {g['kind_th']} คะแนน {g['label']} ที่ผ่านมาชนะ {g['w']}-{g['l']}"
+            + (f" ({g['wr']:.0%})" if g["wr"] is not None else "") + f" กำไร {g['profit']:+.2f} จาก {g['n']} ไม้ → งดลงทุน")
+    return g
 
 
 def _build_contribs(raw, f, P, S):
@@ -1636,6 +1735,11 @@ def render_report(m, f, contribs, pick, store):
         L.append("  อันดับ: " + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:5]))
         L.append(f"  ถ้า{f['home']}ชนะ: {br['home'][0]}-{br['home'][1]} · ถ้าเสมอ: {br['draw'][0]}-{br['draw'][1]} · ถ้า{f['away']}ชนะ: {br['away'][0]}-{br['away'][1]}")
         L.append(f"  สกอร์อันดับ 1 มีโอกาสถูกเพียง ~{sm['top'][0][2]:.0%} — ใช้ดูภาพรวมของเกม ไม่ใช่สกอร์ที่จะออกจริง")
+    g = pick.get("gate")
+    if g:
+        st_th = {"pass": "ผ่าน · ลงทุนได้", "fail": "ไม่ผ่าน · งดลงทุน" if g["enabled"] else "ไม่ผ่าน (ตัวกรองปิดอยู่)", "data": "ข้อมูลยังไม่พอ · ลงทุนตามปกติ"}[g["status"]]
+        L.append(f"\n🚦 ตัวกรองช่วงคะแนน: {g['kind_th']} คะแนน {g['label']} — {st_th}"
+                 + (f" (ที่ผ่านมา {g['w']}-{g['l']}, กำไร {g['profit']:+.2f} จาก {g['n']} ไม้)" if g["n"] else ""))
     L += team_news_lines(m)
     return "\n".join(L)
 
