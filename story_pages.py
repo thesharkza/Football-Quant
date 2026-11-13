@@ -92,6 +92,12 @@ def _hero(m, f, pick):
         flags.append(("มาจากการไหลของราคาล้วน", "warn"))
     for v in pick.get("veto", []):
         flags.append(("แบน " + mth(v, f), "bad"))
+    g = pick.get("gate")
+    if g:
+        rec_ = f" · ที่ผ่านมา {g['w']}-{g['l']} {g['profit']:+.2f}" if g["n"] else ""
+        flags.append(({"pass": "🚦 ช่วงคะแนนผ่าน" + rec_, "fail": "🚦 ช่วงคะแนนไม่ผ่าน" + rec_,
+                       "data": f"🚦 ช่วงคะแนนข้อมูลยังไม่พอ ({g['n']}/{g['min_n']} ไม้)"}[g["status"]],
+                      {"pass": "ok", "fail": "bad", "data": "off"}[g["status"]]))
     sup, opp = pick.get("support"), pick.get("oppose")
     stats = (f'<div class="s-statline"><div class="v">{num(pick["strength"], 2)}</div><div class="t">คะแนนสัญญาณ</div></div>')
     if sup is not None and opp is not None:
@@ -166,6 +172,46 @@ def _ch_score(f):
             + '<div class="s-note s-rv">สกอร์คำนวณจากราคาตลาดเท่านั้น (ไม่ได้ใช้ Rule) และไม่มีผลต่อการฟันธง · จากข้อมูลจริงของระบบ '
               'สกอร์อันดับ 1 ถูกประมาณ 1 ใน 8 นัด และอยู่ใน 3 อันดับแรกประมาณ 1 ใน 3 นัด</div>')
     return chapter("ch-score", "@N@", kick, title, lead, body)
+
+
+def gate_chapter(history, params, n):
+    P = {**q.DEFAULT_PARAMS, **(params or {})}
+    edges = P.get("gate_edges") or q.DEFAULT_PARAMS["gate_edges"]
+    tab = q.gate_table(history, P)
+    kick, title = f"บทที่ {n} · ตัวกรองช่วงคะแนน", "ช่วงไหนลงทุนได้ ช่วงไหนงด"
+    cnt = {"pass": 0, "fail": 0, "data": 0}
+    head = '<div class="ax"></div>' + "".join(f'<div class="ax" style="font-size:.66rem">{e(q.gate_label(i, edges))}</div>' for i in range(len(edges) + 1))
+    cells = ""
+    for k in ("fav", "dog", "over", "under"):
+        cells += f'<div class="ax" style="font-size:.66rem;text-align:left;place-items:center start">{e(q.GATE_KIND_TH[k])}</div>'
+        for i in range(len(edges) + 1):
+            tt = tab.get((k, i))
+            stt = q.gate_status(tt, P)
+            cnt[stt] += 1 if tt else 0
+            if not tt:
+                cells += '<div class="c" style="--a:.03;opacity:.45">–</div>'
+                continue
+            col = {"pass": "rgba(52,211,153,.30)", "fail": "rgba(248,113,113,.32)", "data": "rgba(148,163,184,.12)"}[stt]
+            wr = f'{tt["wr"]:.0%}' if tt["wr"] is not None else "–"
+            tip = (f'{q.GATE_KIND_TH[k]} · คะแนน {q.gate_label(i, edges)}\n{tt["n"]} ไม้ · ชนะ {tt["w"]} แพ้ {tt["l"]} ({wr})\nกำไร {tt["profit"]:+.2f}\n'
+                   + {"pass": "ผ่าน → ลงทุนได้", "fail": "ไม่ผ่าน → งดลงทุน", "data": f"ข้อมูลยังไม่ถึง {P['gate_min_n']} ไม้ → ลงทุนตามปกติ"}[stt])
+            cells += (f'<div class="c s-pop" style="background:{col};color:#e6edf7;aspect-ratio:auto;padding:6px 2px"{tipattr(tip)}>'
+                      f'{wr}<small>{tt["profit"]:+.1f} · {tt["n"]}</small></div>')
+    grid = (f'<div class="s-heat" style="grid-template-columns:96px repeat({len(edges) + 1}, minmax(0,1fr))">{head}{cells}</div>'
+            '<div class="s-note">แต่ละช่อง: อัตราชนะ · กำไร · จำนวนไม้ · เขียว = ผ่าน (ลงทุนได้) · แดง = ไม่ผ่าน (งดลงทุน) · เทา = ข้อมูลยังไม่พอ (ลงทุนตามปกติ) · แตะเพื่อดูรายละเอียด</div>')
+    sus = [r for r in history if r.get("status") == "settled" and (r.get("pick") or {}).get("gate_suspended")]
+    if sus:
+        w = sum(r["pick_r"] > 0 for r in sus); l = sum(r["pick_r"] < 0 for r in sus); pf = sum(r["pick_profit"] for r in sus)
+        track = (f'<div class="s-kv"><span>ไม้ที่ตัวกรองงดไปแล้ว (ผลจริง)</span><b>{len(sus)} ไม้ · {w}-{l}</b></div>'
+                 f'<div class="s-kv"><span>ถ้าเล่นไม้เหล่านั้นจะได้</span><b class="{"s-up" if pf >= 0 else "s-down"}">{pf:+.2f}</b></div>'
+                 f'<div class="s-note">{"ติดลบ = ตัวกรองช่วยกันเงินไว้ได้" if pf < 0 else "เป็นบวก = ตัวกรองทำให้พลาดกำไร"} · ต้องสะสมหลายสิบไม้จึงจะสรุปได้</div>')
+    else:
+        track = '<div class="s-mut s-sm">ยังไม่มีไม้ที่ถูกตัวกรองงดและบันทึกผลแล้ว</div>'
+    onoff = "เปิดอยู่" if P.get("gate_enabled", True) else "ปิดอยู่ (แสดงผลอย่างเดียว ไม่งด)"
+    lead = (f'ตัวกรอง<b>{onoff}</b> · ช่วงที่ผ่าน <b>{cnt["pass"]}</b> · ไม่ผ่าน <b>{cnt["fail"]}</b> · ข้อมูลยังไม่พอ <b>{cnt["data"]}</b> — '
+            f'งดลงทุนเมื่อช่วงนั้นมีอย่างน้อย {P["gate_min_n"]} ไม้ แล้วชนะต่ำกว่า {P["breakeven_wr"]:.1%} หรือขาดทุน')
+    body = card("ประเภทไม้ × ช่วงคะแนน", grid) + card("ติดตามผลของตัวกรอง", track, dl=.1).replace('class="s-card s-rv', 'style="margin-top:12px" class="s-card s-rv', 1)
+    return chapter("st-gate", n, kick, title, lead, body)
 
 
 def score_accuracy_chapter(history, n):
@@ -702,6 +748,7 @@ def stats_story(state, history, params):
     # 4 คะแนนเชื่อได้แค่ไหน
     if len(done) >= 10:
         chs.append(("st-ladder", "คะแนน", _ladder_chapter(done, be, len(chs) + 1)))
+    chs.append(("st-gate", "ตัวกรอง", gate_chapter(history, params, len(chs) + 1)))
     chs.append(("st-score", "สกอร์", score_accuracy_chapter(history, len(chs) + 1)))
     # 5 Rule
     chs.append(("st-life", "Rule", lifecycle_chapter(state, params, len(chs) + 1)))
@@ -805,7 +852,9 @@ def lifecycle_chapter(state, params, n, cid="st-life"):
     if not rows:
         return chapter(cid, n, kick, title, "ยังไม่มี Rule ผู้สมัคร", "")
     cnt = {k: sum(1 for _, x in rows if x["status"] == k) for k in ("active", "shadow", "retired")}
-    lead = (f'ใช้งาน <b>{cnt["active"]}</b> · เงา (ติดตามผลเบื้องหลัง) <b>{cnt["shadow"]}</b> · ถอดแล้ว <b>{cnt["retired"]}</b> — '
+    ready = sorted(rid for rid, x in rows if x.get("ready") and x["status"] == "shadow")
+    lead = ((f'<b>{", ".join(ready)}</b> ผ่านเกณฑ์แล้วแต่ยังไม่เปิดใช้เพราะล็อกสถานะ Rule อยู่ (ปลดล็อกได้ที่ “ตั้งค่าระบบ”) · ' if ready else "")
+            + f'ใช้งาน <b>{cnt["active"]}</b> · เงา (ติดตามผลเบื้องหลัง) <b>{cnt["shadow"]}</b> · ถอดแล้ว <b>{cnt["retired"]}</b> — '
             f'Rule ใหม่ทุกข้อเริ่มเป็นเงา ปลดล็อคเมื่อชนะ ≥ {params["unlock_wr"]:.0%} จาก ≥ {params["unlock_min_n"]} ครั้ง '
             f'หรือครบ {params["judge_n"]} ครั้งแล้วผ่านเกณฑ์')
 
@@ -819,12 +868,13 @@ def lifecycle_chapter(state, params, n, cid="st-life"):
             desc = q.RULE_NAMES.get(rid, rid)
         prog = min(1.0, x["n"] / max(params["judge_n"], 1))
         tip = f'{rid}: {desc}\nผลนอกกลุ่มตัวอย่าง {x["w"]}/{dec}' + (f' = {wr:.0%}' if dec else "") + f'\nใช้ไป {x["n"]}/{params["judge_n"]} ครั้ง\n{x.get("reason", "")}'
-        return (f'<div class="s-brow s-rv" style="--dl:{min(.03 * i, .6):.2f}s"{tipattr(tip)}><span class="l s-sm"><b>{e(rid)}</b> '
+        rdy = (" " + chip("พร้อมใช้ · ล็อกอยู่", "warn")) if x.get("ready") and x["status"] == "shadow" else ""
+        return (f'<div class="s-brow s-rv" style="--dl:{min(.03 * i, .6):.2f}s"{tipattr(tip)}><span class="l s-sm"><b>{e(rid)}</b>{rdy} '
                 f'<span class="s-mut">{e(desc[:60])}</span></span>{bar(prog, "t" if x["status"] == "active" else "n" if x["status"] == "shadow" else "r", mark=None)}'
                 f'<span class="n s-sm">{(f"{wr:.0%}" if dec else "–")} <span class="s-mut">({x["n"]})</span></span></div>')
 
     order = {"active": 0, "shadow": 1, "retired": 2}
-    rows.sort(key=lambda t: (order.get(t[1]["status"], 3), -t[1]["n"]))
+    rows.sort(key=lambda t: (order.get(t[1]["status"], 3), not t[1].get("ready"), -t[1]["n"]))
     tabs = []
     for k, lab in (("active", "ใช้งาน"), ("shadow", "เงา"), ("retired", "ถอดแล้ว")):
         sub = [t for t in rows if t[1]["status"] == k]
