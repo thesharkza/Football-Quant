@@ -707,10 +707,17 @@ with tab3:
         c1_, c2_ = st.columns(2)
         n_mv = c1_.checkbox("ข้ามเมื่อสัญญาณมาจากการไหลของราคาล้วน", value=bool(P0["skip_move_only"]), key="cfg_mv")
         n_vf = c2_.checkbox("ข้ามเมื่อตรวจเหย้า/เยือนไม่ผ่าน", value=bool(P0["skip_verify_fail"]), key="cfg_vf")
+        g1_, g2_ = st.columns([3, 2])
+        n_gate = g1_.toggle("ตัวกรองช่วงคะแนน: งดลงทุนเมื่อประเภทไม้ × ช่วงคะแนนนั้นชนะต่ำกว่าจุดคุ้มทุนหรือขาดทุน",
+                            value=bool(P0.get("gate_enabled", True)), key="cfg_gate")
+        n_gmin = g2_.number_input("ตัดสินเมื่อช่วงนั้นมีอย่างน้อย (ไม้)", 5, 200, int(P0.get("gate_min_n", 20)), key="cfg_gmin")
+        n_lock = st.toggle("ล็อกสถานะ Rule: ไม่เปิดใช้ Rule ใหม่อัตโนมัติ (Rule ที่ผ่านเกณฑ์จะติดป้าย “พร้อมใช้” แต่ยังไม่มีผลต่อการฟันธง)",
+                           value=bool(P0.get("lock_unlocks", True)), key="cfg_lock")
         if st.button("💾 บันทึกการตั้งค่า", key="cfg_save"):
             store.state.setdefault("params", {}).update({"skip_enabled": n_skip, "freeze_weights": n_frz,
                                                          "skip_min_strength": float(n_min), "skip_conflict": float(n_cf),
-                                                         "skip_move_only": n_mv, "skip_verify_fail": n_vf})
+                                                         "skip_move_only": n_mv, "skip_verify_fail": n_vf, "lock_unlocks": n_lock,
+                                                         "gate_enabled": n_gate, "gate_min_n": int(n_gmin)})
             if n_frz:
                 q.weight_key(store)                # สร้างน้ำหนักเงาจากน้ำหนักปัจจุบัน
             store.save()
