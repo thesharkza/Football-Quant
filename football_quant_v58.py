@@ -2532,7 +2532,9 @@ RETRY_CODES = {429, 500, 502, 503, 504}
 API_ERR_TH = {429: "Gemini ถูกเรียกใช้ถี่เกินโควตาชั่วคราว", 500: "เซิร์ฟเวอร์ Gemini ขัดข้องชั่วคราว",
               502: "เซิร์ฟเวอร์ Gemini ขัดข้องชั่วคราว", 503: "Gemini มีผู้ใช้หนาแน่น ให้บริการไม่ได้ชั่วคราว",
               504: "Gemini ตอบช้าเกินกำหนด", 400: "คำขอไม่ถูกต้อง (ตรวจชื่อโมเดล/รูปภาพ)",
-              401: "API key ไม่ถูกต้อง", 403: "API key ไม่มีสิทธิ์ใช้โมเดลนี้", 404: "ไม่พบโมเดลนี้"}
+              401: "API key ไม่ถูกต้อง",
+              402: "เครดิต Gemini แบบเติมเงินล่วงหน้าหมดแล้ว — เติมเครดิตที่ aistudio.google.com/billing (ปุ่ม Buy credits) "
+                   "แล้วรอสักครู่ให้ยอดอัปเดต (ตั้ง Auto-reload ไว้ได้เพื่อไม่ให้หมดอีก)", 403: "API key ไม่มีสิทธิ์ใช้โมเดลนี้", 404: "ไม่พบโมเดลนี้"}
 
 
 def _post_json(url, headers, payload, tries=4):
@@ -2551,7 +2553,7 @@ def _post_json(url, headers, payload, tries=4):
                 continue
             msg = API_ERR_TH.get(e.code, "API ตอบกลับผิดพลาด")
             extra = f" (ลองแล้ว {tries} ครั้ง) — รอสักครู่แล้วกดวิเคราะห์ใหม่" if e.code in RETRY_CODES else ""
-            sys.exit(f"{msg}{extra} [รหัส {e.code}]" + ("" if e.code in RETRY_CODES else f": {detail}"))
+            sys.exit(f"{msg}{extra} [รหัส {e.code}]" + ("" if e.code in RETRY_CODES or e.code == 402 else f": {detail}"))
         except urllib.error.URLError as e:
             if k < tries - 1:
                 time.sleep(waits[min(k, len(waits) - 1)])
