@@ -2627,6 +2627,24 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
 INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
 
+def _collect_links(node, out, depth=0):
+    """เก็บทุก dict ที่มีลิงก์ http (url/uri) พร้อมชื่อ จากผลค้นหา/การอ้างอิง (ไม่สนรูปแบบการซ้อน)"""
+    if depth > 10:
+        return
+    if isinstance(node, list):
+        for x in node:
+            _collect_links(x, out, depth + 1)
+        return
+    if not isinstance(node, dict):
+        return
+    link = node.get("url") or node.get("uri")
+    if isinstance(link, str) and link.startswith("http"):
+        out.append({"title": str(node.get("title") or node.get("domain") or node.get("source") or ""), "uri": link})
+    for k, v in node.items():
+        if isinstance(v, (list, dict)):
+            _collect_links(v, out, depth + 1)
+
+
 def _walk_interaction(node, acc, depth=0):
     """ไล่อ่านคำตอบของ Interactions API แบบทนต่อโครงสร้างที่ต่างกัน: เก็บข้อความคำตอบ, คำค้น, และแหล่งอ้างอิง"""
     if depth > 12:
@@ -2638,7 +2656,11 @@ def _walk_interaction(node, acc, depth=0):
     if not isinstance(node, dict):
         return
     t = node.get("type")
-    if t in ("thought", "google_search_result"):          # ไม่เอาความคิดภายใน/HTML คำแนะนำการค้น
+    if t == "thought":                                    # ไม่เอาความคิดภายใน
+        return
+    if t == "google_search_result":                       # รายการผลค้นหา: เก็บเฉพาะลิงก์+ชื่อ (ข้าม HTML คำแนะนำการค้น)
+        acc["searched"] = True
+        _collect_links({k: v for k, v in node.items() if k not in ("search_suggestions", "rendered_content")}, acc["sources"])
         return
     if t == "google_search_call":
         acc["searched"] = True
@@ -2647,9 +2669,8 @@ def _walk_interaction(node, acc, depth=0):
         return
     if t == "text" and isinstance(node.get("text"), str):
         acc["text"].append(node["text"])
-    for an in node.get("annotations") or []:
-        if isinstance(an, dict) and an.get("url"):
-            acc["sources"].append({"title": str(an.get("title") or ""), "uri": str(an["url"])})
+    if node.get("annotations"):
+        _collect_links(node["annotations"], acc["sources"])
     for k, v in node.items():
         if k not in ("annotations", "arguments") and isinstance(v, (list, dict)):
             _walk_interaction(v, acc, depth + 1)
@@ -2675,12 +2696,17 @@ def gemini_search(prompt, model, api_key, max_tokens=4096, temperature=None):
     try:
         data = _post_json(INTERACTIONS_URL, hdr, {"model": model, "input": prompt, "tools": [{"type": "google_search"}]}, tries=2)
         acc = {"text": [], "sources": [], "queries": [], "searched": False}
-        _walk_interaction(data.get("steps") if isinstance(data, dict) and data.get("steps") is not None else data, acc)
+        steps = data.get("steps") if isinstance(data, dict) and data.get("steps") is not None else data
+        _walk_interaction(steps, acc)
         text = "".join(acc["text"]).strip()
         if text:
             src = _uniq_sources(acc["sources"])
+            shape = []                                    # โครงสร้างคำตอบแบบย่อ (ไว้วินิจฉัยเมื่อไม่ได้ลิงก์แหล่ง)
+            for st_ in (steps if isinstance(steps, list) else [])[:12]:
+                if isinstance(st_, dict):
+                    shape.append(str(st_.get("type")) + ":" + ",".join(sorted(k for k in st_ if k != "type"))[:80])
             return {"text": text, "sources": src, "queries": acc["queries"], "api": "interactions",
-                    "searched": bool(acc["searched"] or src)}
+                    "searched": bool(acc["searched"] or src), "shape": shape if not src else None}
     except (SystemExit, Exception):  # noqa  (รุ่น/บัญชีที่ยังใช้ช่องทางใหม่ไม่ได้ -> ใช้ช่องทางเดิม)
         pass
     gen = {"maxOutputTokens": max_tokens}
@@ -2698,7 +2724,7 @@ def gemini_search(prompt, model, api_key, max_tokens=4096, temperature=None):
     src = _uniq_sources([{"title": (ch.get("web") or {}).get("title") or "", "uri": (ch.get("web") or {}).get("uri") or ""}
                          for ch in gm.get("groundingChunks") or []])
     qs = list(gm.get("webSearchQueries") or [])
-    return {"text": text, "sources": src, "queries": qs, "api": "generateContent", "searched": bool(src or qs)}
+    return {"text": text, "sources": src, "queries": qs, "api": "generateContent", "searched": bool(src or qs), "shape": None}
 
 
 def research_context(home, away, league, model, api_key, today=None):
@@ -2708,7 +2734,7 @@ def research_context(home, away, league, model, api_key, today=None):
     r = gemini_search(prompt, model, api_key, 4096)
     out = parse_json_reply(r["text"])
     if isinstance(out, dict):
-        out["_search"] = {"api": r["api"], "searched": r["searched"]}
+        out["_search"] = {"api": r["api"], "searched": r["searched"], "shape": r.get("shape")}
     return out, r["sources"], r["queries"]
 
 
@@ -2834,7 +2860,7 @@ def research_team_news(home, away, league, model, api_key, today=None):
     r = gemini_search(prompt, model, api_key, 6144, temperature=0)
     out = parse_json_reply(r["text"])
     if isinstance(out, dict):
-        out["_search"] = {"api": r["api"], "searched": r["searched"]}
+        out["_search"] = {"api": r["api"], "searched": r["searched"], "shape": r.get("shape")}
     return out, r["sources"], r["queries"]
 
 
@@ -2882,7 +2908,8 @@ def validate_team_news(raw, sources, queries=None, today=None, home=None, away=N
     se = r.get("_search") if isinstance(r.get("_search"), dict) else {}
     searched = bool(se.get("searched") or grounded or queries)       # มีหลักฐานจาก API ว่าค้นเว็บจริง
     out = {"searched_at": ref.isoformat(), "grounded": sorted(grounded), "sources": (sources or [])[:12],
-           "queries": (queries or [])[:8], "missing": [], "problems": [], "searched": searched, "api": se.get("api")}
+           "queries": (queries or [])[:8], "missing": [], "problems": [], "searched": searched, "api": se.get("api"),
+           "shape": se.get("shape")}
     if not searched:
         out["problems"].append("Gemini ไม่ส่งหลักฐานการค้นเว็บกลับมาในครั้งนี้ จึงยืนยันไม่ได้ว่าข้อมูลมาจากการค้นจริง — ไม่แสดงและไม่นำข้อมูลทีมไปใช้")
     elif not grounded:
