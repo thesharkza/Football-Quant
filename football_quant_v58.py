@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import socket as _socket
+import threading as _threading
 import datetime as _dt_mod
 import itertools
 import json
@@ -2219,7 +2221,7 @@ def job_new(owner):
         for k in [k for k, j in JOBS.items() if now - j["started"] > JOB_TTL]:
             JOBS.pop(k, None)
         JOBS[jid] = {"id": jid, "owner": owner, "status": "running", "steps": [], "result": None, "error": None,
-                     "started": now, "finished": None}
+                     "started": now, "finished": None, "deadline": now + JOB_MAX_SEC, "note": None, "cancelled": False}
     return JOBS[jid]
 
 
@@ -2240,8 +2242,11 @@ def job_latest(owner, max_age=1800):
 def job_start(job, fn, *args):
     """รัน fn(job, *args) ในเธรดเบื้องหลัง: fn ต้องไม่เรียกคำสั่งแสดงผลของ Streamlit และต้องคืนผลลัพธ์ (dict) หรือ raise"""
     def run():
+        _TL.job = job
         try:
             res = fn(job, *args)
+            if job.get("cancelled"):
+                raise SystemExit("ยกเลิกการวิเคราะห์แล้ว")
             job["result"] = res
             job["status"] = "gate" if isinstance(res, dict) and res.get("_gate") else "done"
         except SystemExit as e:
@@ -2251,6 +2256,8 @@ def job_start(job, fn, *args):
         except Exception as e:  # noqa
             job["error"], job["status"] = f"เกิดข้อผิดพลาดที่ไม่คาดคิด: {type(e).__name__}: {str(e)[:200]}", "error"
         finally:
+            _TL.job = None
+            job["note"] = None
             job["finished"] = time.time()
             cb = job.pop("on_finish", None)
             if cb:
@@ -2537,32 +2544,68 @@ API_ERR_TH = {429: "Gemini ถูกเรียกใช้ถี่เกิ�
                    "แล้วรอสักครู่ให้ยอดอัปเดต (ตั้ง Auto-reload ไว้ได้เพื่อไม่ให้หมดอีก)", 403: "API key ไม่มีสิทธิ์ใช้โมเดลนี้", 404: "ไม่พบโมเดลนี้"}
 
 
-def _post_json(url, headers, payload, tries=4):
-    """เรียก API พร้อมลองใหม่อัตโนมัติเมื่อเซิร์ฟเวอร์ไม่ว่างชั่วคราว (429/5xx): รอ 2, 5, 10 วินาที"""
+_TL = _threading.local()                          # งานเบื้องหลังที่เธรดนี้กำลังทำ (ไว้รายงานความคืบหน้า/ยกเลิก)
+CALL_TIMEOUT = 120                                # รอคำตอบต่อครั้งไม่เกิน 2 นาที (เดิม 3 นาที)
+JOB_MAX_SEC = 360                                 # เวลารวมสูงสุดของงานวิเคราะห์ 1 งาน (6 นาที)
+
+
+def _job_note(msg):
+    j = getattr(_TL, "job", None)
+    if j is not None:
+        j["note"] = msg
+
+
+def _job_check():
+    """หยุดงานถ้าผู้ใช้กดยกเลิก หรือใช้เวลาเกินกำหนดรวมของงาน"""
+    j = getattr(_TL, "job", None)
+    if j is None:
+        return None
+    if j.get("cancelled"):
+        sys.exit("ยกเลิกการวิเคราะห์แล้ว")
+    left = j.get("deadline", time.time() + 1e9) - time.time()
+    if left <= 5:
+        sys.exit(f"ใช้เวลานานเกิน {JOB_MAX_SEC // 60} นาที — Gemini น่าจะหนาแน่นหรือตอบช้าผิดปกติ รอสักครู่แล้วกดวิเคราะห์ใหม่")
+    return left
+
+
+def _post_json(url, headers, payload, tries=3):
+    """เรียก API: ลองใหม่อัตโนมัติเมื่อเซิร์ฟเวอร์ไม่ว่าง/ตอบช้า (รอ 2, 5 วินาที) และแจ้งความคืบหน้าให้หน้าจอเห็น
+    ถ้าอยู่ในงานเบื้องหลัง จะไม่เกินเวลารวมของงาน และหยุดเมื่อผู้ใช้กดยกเลิก"""
     body = json.dumps(payload).encode("utf-8")
     waits = [2, 5, 10]
     for k in range(tries):
+        left = _job_check()
+        timeout = CALL_TIMEOUT if left is None else max(10, min(CALL_TIMEOUT, left - 5))
         req = urllib.request.Request(url, data=body, headers=headers)
+        why = None
         try:
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                return json.load(resp)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                out = json.load(resp)
+            _job_note(None)
+            return out
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "ignore")[:300]
             if e.code in RETRY_CODES and k < tries - 1:
-                time.sleep(waits[min(k, len(waits) - 1)])
-                continue
-            msg = API_ERR_TH.get(e.code, "API ตอบกลับผิดพลาด")
-            extra = f" (ลองแล้ว {tries} ครั้ง) — รอสักครู่แล้วกดวิเคราะห์ใหม่" if e.code in RETRY_CODES else ""
-            sys.exit(f"{msg}{extra} [รหัส {e.code}]" + ("" if e.code in RETRY_CODES or e.code == 402 else f": {detail}"))
+                why = API_ERR_TH.get(e.code, f"รหัส {e.code}")
+            else:
+                msg = API_ERR_TH.get(e.code, "API ตอบกลับผิดพลาด")
+                extra = f" (ลองแล้ว {tries} ครั้ง) — รอสักครู่แล้วกดวิเคราะห์ใหม่" if e.code in RETRY_CODES else ""
+                sys.exit(f"{msg}{extra} [รหัส {e.code}]" + ("" if e.code in RETRY_CODES or e.code == 402 else f": {detail}"))
+        except (TimeoutError, _socket.timeout):
+            if k >= tries - 1:
+                sys.exit(f"Gemini ไม่ตอบภายใน {int(timeout)} วินาที (ลองแล้ว {tries} ครั้ง) — รอสักครู่แล้วกดวิเคราะห์ใหม่")
+            why = f"Gemini ไม่ตอบภายใน {int(timeout)} วินาที"
         except urllib.error.URLError as e:
-            if k < tries - 1:
-                time.sleep(waits[min(k, len(waits) - 1)])
-                continue
-            sys.exit(f"เชื่อมต่อ API ไม่ได้: {e.reason}")
-        except TimeoutError:
-            if k < tries - 1:
-                continue
-            sys.exit("Gemini ตอบช้าเกินกำหนด — รอสักครู่แล้วลองใหม่")
+            if isinstance(getattr(e, "reason", None), (TimeoutError, _socket.timeout)):
+                if k >= tries - 1:
+                    sys.exit(f"Gemini ไม่ตอบภายใน {int(timeout)} วินาที (ลองแล้ว {tries} ครั้ง) — รอสักครู่แล้วกดวิเคราะห์ใหม่")
+                why = f"Gemini ไม่ตอบภายใน {int(timeout)} วินาที"
+            elif k < tries - 1:
+                why = f"เชื่อมต่อไม่ได้ ({e.reason})"
+            else:
+                sys.exit(f"เชื่อมต่อ API ไม่ได้: {e.reason}")
+        _job_note(f"{why} — กำลังลองใหม่ครั้งที่ {k + 2}/{tries}")
+        time.sleep(waits[min(k, len(waits) - 1)])
 
 
 def extract_from_images(paths, model, api_key):
