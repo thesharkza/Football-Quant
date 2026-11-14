@@ -398,6 +398,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
         return {"_gate": True, "m": m, "ext_warn": ext_warn, "research_err": research_err,
                 "critical": chk["critical"], "save": save,
                 "match_json": json.dumps(m, ensure_ascii=False, indent=2, default=str)}
+    q._job_check()                                  # ถูกยกเลิก/หมดเวลา -> ไม่บันทึกผล
     step("📊 กำลังวิเคราะห์ราคาและฟันธง ...")
     res = make_result(m, opts, ext_warn, research_err, save)
     res["match_json"] = json.dumps({k: v for k, v in res["m"].items() if k != "warnings"}, ensure_ascii=False, indent=2, default=str)
@@ -435,9 +436,17 @@ def job_watch(jid):
     sec = int(time.time() - j["started"])
     steps = "".join(f'<div style="opacity:{1 if i == len(j["steps"]) - 1 else .55}">{"⏳" if i == len(j["steps"]) - 1 else "✅"} {esc(s_[2:].strip())}</div>'
                     for i, s_ in enumerate(j["steps"]))
-    st.markdown(f'<div class="card"><h4>กำลังวิเคราะห์เบื้องหลัง · {sec} วินาที</h4>{steps}'
-                '<div class="muted" style="margin-top:8px">สลับไปแอปอื่นหรือปิดหน้าจอได้ งานยังเดินต่อบนเซิร์ฟเวอร์ กลับมาหน้านี้เมื่อไหร่ก็เห็นผล</div></div>',
+    note = f'<div style="color:#fbbf24;font-size:.85rem;margin-top:6px">⚠ {esc(j["note"])}</div>' if j.get("note") else ""
+    st.markdown(f'<div class="card"><h4>กำลังวิเคราะห์เบื้องหลัง · {sec} วินาที (ไม่เกิน {q.JOB_MAX_SEC // 60} นาที)</h4>{steps}{note}'
+                '<div class="muted" style="margin-top:8px">ปกติใช้ 1–2 นาที · สลับไปแอปอื่นหรือปิดหน้าจอได้ งานยังเดินต่อบนเซิร์ฟเวอร์ กลับมาหน้านี้เมื่อไหร่ก็เห็นผล</div></div>',
                 unsafe_allow_html=True)
+    if st.button("✖ ยกเลิกการวิเคราะห์นี้", key=f"job_cancel_{jid}"):
+        j["cancelled"] = True                       # เธรดจะหยุดเองเมื่อคำขอที่ค้างอยู่จบ และไม่บันทึกผล · สิทธิ์ถูกคืนอัตโนมัติ
+        j["dismissed"] = True
+        ss.pop("job_id", None)
+        if "job" in st.query_params:
+            del st.query_params["job"]
+        st.rerun()
 
 
 _F_DEFAULTS = {"rank_home": None, "rank_away": None, "league_size": None, "verify": [], "verify_fail": False,
