@@ -6,7 +6,7 @@
 ## รันในเครื่อง
 ```bash
 pip install -r requirements.txt
-export GEMINI_API_KEY=...                # ใช้เฉพาะตอนอ่านรูป (โมเดลเริ่มต้น gemini-3.7-flash)
+export GEMINI_API_KEY=...                # ใช้เฉพาะตอนอ่านรูป (โมเดลเริ่มต้น gemini-3.5-flash-lite)
 streamlit run app.py
 ```
 ใช้ผ่านบรรทัดคำสั่งก็ได้: `python football_quant_v58.py --help`
