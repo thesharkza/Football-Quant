@@ -573,9 +573,10 @@ with tab1:
             st.markdown(f'<div class="res lose">พบข้อมูลที่อาจอ่านผิดจากรูป ({len(g["critical"])} จุด) ระบบหยุดไว้ก่อนวิเคราะห์'
                         f'<ul style="margin:8px 0 0;padding-left:18px;font-weight:400">{items}</ul></div>', unsafe_allow_html=True)
             st.caption(("ตรวจตัวเลขในรูปเทียบกับข้อมูลที่อ่านได้ (เปิด “⚙ ตั้งค่าขั้นสูง” ด้านล่างเพื่อแก้ แล้วกด “วิเคราะห์ใหม่จากข้อมูลที่แก้ไข”) "
-                        if IS_ADMIN else "ตรวจตัวเลขในรูปอีกครั้ง ") + "หรือถ้าตรวจแล้วข้อมูลถูกต้อง กดวิเคราะห์ต่อได้ (ไม่เสียสิทธิ์เพิ่ม)")
+                        if IS_ADMIN else "ตรวจตัวเลขในรูปอีกครั้ง ") + "หรือกดวิเคราะห์ต่อเพื่อดูผล (ไม่เสียสิทธิ์เพิ่ม) · "
+                       "ถ้าวิเคราะห์ต่อโดยไม่แก้ตัวเลข ไม้นี้จะถูก “ข้ามอัตโนมัติ” เป็นไม้เงา ไม่ควรลงเงิน")
             g1, g2 = st.columns(2)
-            if g1.button("▶ ข้อมูลถูกต้อง วิเคราะห์ต่อ", type="primary", key="gate_go"):
+            if g1.button("▶ วิเคราะห์ต่อ (ไม้นี้จะเป็นไม้เงา)", type="primary", key="gate_go"):
                 try:
                     ss["res"] = make_result(json.loads(json.dumps(g["m"])), get_opts(), g["ext_warn"], g["research_err"], g["save"])
                     ss.pop("gate", None)
