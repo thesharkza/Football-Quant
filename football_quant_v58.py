@@ -1393,6 +1393,14 @@ class Store:
 def analyze_match(m, store):
     f, contribs, pick = analyze_features(m, build_features(m, store.params), store)
     gate_check(store, f, pick)
+    crit = list(m.get("critical") or [])
+    if crit and not pick.get("skip"):                  # ราคาที่อ่านจากรูปผิดปกติร้ายแรง -> ไม่ลงเงิน (แก้ตัวเลขแล้ววิเคราะห์ใหม่จึงลงทุนได้)
+        pick["skip"] = True
+        pick["critical_skip"] = True
+        pick.setdefault("skip_reasons", []).append(
+            f"ราคาที่อ่านจากรูปผิดปกติร้ายแรง {len(crit)} จุด (เช่น {crit[0][:60]}) → ข้ามอัตโนมัติ · แก้ตัวเลขในช่องแก้ข้อมูลแล้ววิเคราะห์ใหม่เพื่อลงทุน")
+    elif crit:
+        pick["critical_skip"] = True
     return f, contribs, pick
 
 
