@@ -332,7 +332,8 @@ def get_opts():
     return {"model": (ss.get("opt_model") or q.DEFAULT_MODEL).strip(),
             "api_key": q.get_api_key(secret) or (ss.get("opt_key") or "").strip() or None,
             "ctx": ctx, "league_size": int(ss.get("opt_league_size") or 0),
-            "desp": ss.get("opt_desp") or "ไม่มี"}
+            "desp": ss.get("opt_desp") or "ไม่มี",
+            "team_news": bool(q.Store(DATA_DIR).params.get("team_news_enabled", False))}
 
 
 def make_result(m, opts, ext_warn=(), research_err=None, save=True):
@@ -380,6 +381,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
             research_err = str(e.code)
         except Exception as e:  # noqa
             research_err = f"{type(e).__name__}: {str(e)[:150]}"
+    if do_research and opts.get("team_news"):
         step("🩺 กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก ...")
         try:
             r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"), opts["model"], opts["api_key"])
@@ -750,13 +752,16 @@ with tab3:
         n_gate = g1_.toggle("ตัวกรองช่วงคะแนน: งดลงทุนเมื่อประเภทไม้ × ช่วงคะแนนนั้นชนะต่ำกว่าจุดคุ้มทุนหรือขาดทุน",
                             value=bool(P0.get("gate_enabled", True)), key="cfg_gate")
         n_gmin = g2_.number_input("ตัดสินเมื่อช่วงนั้นมีอย่างน้อย (ไม้)", 5, 200, int(P0.get("gate_min_n", 20)), key="cfg_gmin")
+        n_tn = st.toggle("ค้นข่าวทีม (xG/ตัวเจ็บ/วันพัก) ทุกการวิเคราะห์ · ใช้โควตา Gemini เพิ่มราว 1 เท่า และยังไม่มีผลต่อการฟันธง",
+                         value=bool(P0.get("team_news_enabled", False)), key="cfg_tn")
         n_lock = st.toggle("ล็อกสถานะ Rule: ไม่เปิดใช้ Rule ใหม่อัตโนมัติ (Rule ที่ผ่านเกณฑ์จะติดป้าย “พร้อมใช้” แต่ยังไม่มีผลต่อการฟันธง)",
                            value=bool(P0.get("lock_unlocks", True)), key="cfg_lock")
         if st.button("💾 บันทึกการตั้งค่า", key="cfg_save"):
             store.state.setdefault("params", {}).update({"skip_enabled": n_skip, "freeze_weights": n_frz,
                                                          "skip_min_strength": float(n_min), "skip_conflict": float(n_cf),
                                                          "skip_move_only": n_mv, "skip_verify_fail": n_vf, "lock_unlocks": n_lock,
-                                                         "gate_enabled": n_gate, "gate_min_n": int(n_gmin)})
+                                                         "gate_enabled": n_gate, "gate_min_n": int(n_gmin),
+                                                         "team_news_enabled": n_tn})
             if n_frz:
                 q.weight_key(store)                # สร้างน้ำหนักเงาจากน้ำหนักปัจจุบัน
             store.save()
