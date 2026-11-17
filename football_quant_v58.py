@@ -154,6 +154,7 @@ RULE_NAMES = {
     "R44": "Key Starters Missing (ตัวจริงหาย)",
     "R45": "Rest Days Gap (พักน้อย/มาก)",
     "R46": "Cup Rotation Risk (หมุนเวียนตัวหลัก)",
+    "R47": "Hot Favourite vs Blunt Underdog (ต่อฟอร์มร้อน รองยิงไม่เข้า)",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
 MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "X1"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
@@ -378,6 +379,10 @@ def build_features(m, P):
     f["verify"] = verify_home_away(m, f)
     f["verify_fail"] = any(not ok for ok, _ in f["verify"])
     f["tags"] = make_tags(f, P)
+    _dfm = (m.get("form") or {}).get(dog) or {}
+    _dn = _dfm.get("games") or len(str(_dfm.get("seq") or "")) or 0
+    f["dog_gf_pg"] = (float(_dfm["gf"]) / _dn) if (_dn and _num(_dfm.get("gf"))) else None   # ประตูได้ต่อนัดของทีมรอง (5 นัดหลัง)
+    f["feat_v"] = 2                                   # รุ่นของ features (R47 นับเฉพาะนัดที่วิเคราะห์ด้วยรุ่นนี้ขึ้นไป = นอกกลุ่มตัวอย่าง)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     try:
         f["score_model"] = score_model(f)              # สกอร์ที่น่าจะเป็น (แสดงผลเท่านั้น ไม่มีผลต่อการฟันธง)
@@ -961,10 +966,21 @@ def exp46(f, P, c):
         return _exp([(f["dog_hdp"], 1.0)], [], "R46: บอลถ้วย มีข่าวยืนยันว่าทีมต่อจะหมุนเวียน/พักตัวหลัก -> ถือรอง")
 
 
+def exp47(f, P, c):
+    """R47: ทีมต่อฟอร์มร้อน (ชนะ >= 80% ใน 5 นัด) + ทีมรองยิงไม่เข้า (<= 1.0 ลูก/นัด) -> ถือต่อ
+    เพิ่มเมื่อ 17 พ.ย. 2026 จากข้อสังเกตของผู้ใช้ · นับเฉพาะนัดที่วิเคราะห์หลังจากนั้น (feat_v >= 2) เพื่อไม่ให้ข้อมูลที่ใช้ตั้งสมมติฐานมาตัดสินตัวเอง"""
+    if f.get("feat_v", 0) < 2:
+        return None
+    wr, g = f.get("fav_win_rate"), f.get("dog_gf_pg")
+    if wr is not None and g is not None and wr >= 80 and g <= 1.0:
+        return _exp([(f["fav_hdp"], 1.0)], [], f"R47: ทีมต่อชนะ {wr:.0f}% ใน 5 นัด ทีมรองยิงได้เฉลี่ย {g:.1f} ลูก/นัด -> ถือต่อ")
+
+
 # Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
 EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
                 "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40,
-                "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
+                "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46,
+                "R47": exp47}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
 
 
 for _rid in ("R28", "R31"):                       # Rule ทดลองที่มี 2 ตลาด
