@@ -702,10 +702,39 @@ with tab2:
             st.caption("แก้ตัวเลขสกอร์ให้ต่างจากที่บันทึกไว้ ปุ่มบันทึกจึงจะใช้งานได้")
 
 # ================================================================ TAB 3
+def _data_stamp():
+    """ลายเซ็นของไฟล์ข้อมูล (เวลาแก้ไข + ขนาด) เปลี่ยนเมื่อมีการบันทึกผล/แก้ไขจากเครื่องใดก็ได้"""
+    out = []
+    for fn in ("history.json", "state.json"):
+        try:
+            s_ = os.stat(os.path.join(DATA_DIR, fn))
+            out.append((s_.st_mtime_ns, s_.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+@st.fragment(run_every=10)
+def stats_live():
+    """หน้าสถิติแบบ realtime: ตรวจทุก 10 วินาที ถ้ามีผลใหม่ (จากเครื่องใดก็ได้) จะคำนวณกราฟใหม่ทันที"""
+    stamp = _data_stamp()
+    cache = ss.get("_stats_live")
+    if not cache or cache["stamp"] != stamp:
+        st_ = q.Store(DATA_DIR)
+        n_done = sum(1 for r in st_.history if r.get("status") == "settled")
+        html_ = SP.stats_story(st_.state, st_.history, st_.params)
+        if cache and n_done != cache["n"]:
+            st.toast(f"📈 มีผลใหม่ อัปเดตสถิติแล้ว ({n_done} นัด)")
+        cache = {"stamp": stamp, "html": html_, "n": n_done, "at": q.now_th("%H:%M:%S")}
+        ss["_stats_live"] = cache
+    st.caption(f"🟢 อัปเดตอัตโนมัติ · ข้อมูลล่าสุดเมื่อ {cache['at']} · ตรวจผลใหม่ทุก 10 วินาที")
+    show(cache["html"], key="stats")
+
+
 with tab3:
     store = q.Store(DATA_DIR)
     S = store.state
-    show(SP.stats_story(S, store.history, store.params), key="stats")
+    stats_live()
     with st.expander("⚙ ตั้งค่าระบบ: สถานะ “ข้าม” และการแช่แข็งน้ำหนัก Rule"):
         P0 = store.params
         a1, a2 = st.columns(2)
