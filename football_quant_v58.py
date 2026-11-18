@@ -155,6 +155,9 @@ RULE_NAMES = {
     "R45": "Rest Days Gap (พักน้อย/มาก)",
     "R46": "Cup Rotation Risk (หมุนเวียนตัวหลัก)",
     "R47": "Hot Favourite vs Blunt Underdog (ต่อฟอร์มร้อน รองยิงไม่เข้า)",
+    "R48": "Hot Home Form Fade (เหย้าฟอร์มร้อน -> เยือน)",
+    "R49": "Home Goal Glut Under (เหย้ายิงเยอะ -> ต่ำ)",
+    "R50": "Tight Away Defence (เยือนเสียน้อย -> เยือน)",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
 MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "X1"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
@@ -382,7 +385,17 @@ def build_features(m, P):
     _dfm = (m.get("form") or {}).get(dog) or {}
     _dn = _dfm.get("games") or len(str(_dfm.get("seq") or "")) or 0
     f["dog_gf_pg"] = (float(_dfm["gf"]) / _dn) if (_dn and _num(_dfm.get("gf"))) else None   # ประตูได้ต่อนัดของทีมรอง (5 นัดหลัง)
-    f["feat_v"] = 2                                   # รุ่นของ features (R47 นับเฉพาะนัดที่วิเคราะห์ด้วยรุ่นนี้ขึ้นไป = นอกกลุ่มตัวอย่าง)
+    def _f5(side):                                    # ฟอร์ม 5 นัดหลังจากรูป: (% ชนะ, ประตูได้/นัด, ประตูเสีย/นัด)
+        x = (m.get("form") or {}).get(side) or {}
+        seq = str(x.get("seq") or "").upper()
+        n = x.get("games") or len(seq) or 0
+        wr = 100.0 * seq.count("W") / len(seq) if seq else (float(x["win_rate"]) if _num(x.get("win_rate")) else None)
+        gf = float(x["gf"]) / n if (n and _num(x.get("gf"))) else None
+        ga = float(x["ga"]) / n if (n and _num(x.get("ga"))) else None
+        return wr, gf, ga
+    f["home_wr5"], f["home_gf5"], f["home_ga5"] = _f5("home")
+    f["away_wr5"], f["away_gf5"], f["away_ga5"] = _f5("away")
+    f["feat_v"] = 3                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 ตั้งแต่รุ่น 3 (นัดที่วิเคราะห์หลังเพิ่ม Rule = นอกกลุ่มตัวอย่าง)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     try:
         f["score_model"] = score_model(f)              # สกอร์ที่น่าจะเป็น (แสดงผลเท่านั้น ไม่มีผลต่อการฟันธง)
@@ -976,11 +989,42 @@ def exp47(f, P, c):
         return _exp([(f["fav_hdp"], 1.0)], [], f"R47: ทีมต่อชนะ {wr:.0f}% ใน 5 นัด ทีมรองยิงได้เฉลี่ย {g:.1f} ลูก/นัด -> ถือต่อ")
 
 
+def _home_away_mk(f):
+    return (f["fav_hdp"], f["dog_hdp"]) if f["fav"] == "home" else (f["dog_hdp"], f["fav_hdp"])
+
+
+def exp48(f, P, c):
+    """R48: เจ้าบ้านฟอร์มร้อน (ชนะ >= 4 ใน 5 นัด) -> ตลาดมักให้ราคาเกินจริง ถือทีมเยือน
+    เพิ่ม 18 พ.ย. 2026 (ข้อมูลเดิม 504 นัด: แทงเยือน 33-14) · นับเฉพาะนัดใหม่ (feat_v >= 3)"""
+    if f.get("feat_v", 0) < 3 or f.get("home_wr5") is None:
+        return None
+    if f["home_wr5"] >= 80:
+        return _exp([(_home_away_mk(f)[1], 1.0)], [], f"R48: เจ้าบ้านชนะ {f['home_wr5']:.0f}% ใน 5 นัด (ฟอร์มร้อน ราคามักเกินจริง) -> ถือทีมเยือน")
+
+
+def exp49(f, P, c):
+    """R49: เจ้าบ้านยิงเยอะ (>= 2 ลูก/นัด ใน 5 นัด) -> เส้นสูง/ต่ำมักตั้งเผื่อเกินจริง ถือต่ำ
+    เพิ่ม 18 พ.ย. 2026 (ข้อมูลเดิม: ต่ำ 64-48) · นับเฉพาะนัดใหม่ (feat_v >= 3)"""
+    if f.get("feat_v", 0) < 3 or f.get("home_gf5") is None or not f.get("has_ou"):
+        return None
+    if f["home_gf5"] >= 2.0:
+        return _exp([("OU_UNDER", 1.0)], [], f"R49: เจ้าบ้านยิงเฉลี่ย {f['home_gf5']:.1f} ลูก/นัด (เส้นมักเผื่อเกม) -> ถือต่ำ")
+
+
+def exp50(f, P, c):
+    """R50: ทีมเยือนเกมรับแน่น (เสีย <= 0.6 ลูก/นัด ใน 5 นัด) -> ถือทีมเยือน
+    เพิ่ม 18 พ.ย. 2026 (ข้อมูลเดิม: แทงเยือน 36-21) · นับเฉพาะนัดใหม่ (feat_v >= 3)"""
+    if f.get("feat_v", 0) < 3 or f.get("away_ga5") is None:
+        return None
+    if f["away_ga5"] <= 0.6:
+        return _exp([(_home_away_mk(f)[1], 1.0)], [], f"R50: ทีมเยือนเสียเฉลี่ย {f['away_ga5']:.1f} ลูก/นัด (เกมรับแน่น) -> ถือทีมเยือน")
+
+
 # Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
 EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
                 "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40,
                 "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46,
-                "R47": exp47}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
+                "R47": exp47, "R48": exp48, "R49": exp49, "R50": exp50}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
 
 
 for _rid in ("R28", "R31"):                       # Rule ทดลองที่มี 2 ตลาด
