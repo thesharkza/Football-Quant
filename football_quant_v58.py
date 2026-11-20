@@ -158,6 +158,18 @@ RULE_NAMES = {
     "R48": "Hot Home Form Fade (เหย้าฟอร์มร้อน -> เยือน)",
     "R49": "Home Goal Glut Under (เหย้ายิงเยอะ -> ต่ำ)",
     "R50": "Tight Away Defence (เยือนเสียน้อย -> เยือน)",
+    "R51": "Line-adjusted Steam (ตามเงินแบบเทียบเรต)",
+    "R52": "Hot Favourite Fade (ต่อฟอร์มร้อน -> รอง)",
+    "R53": "AH Longshot Side (ฝั่งน้ำสูง)",
+    "R54": "OU Longshot Side (สูง/ต่ำ ฝั่งน้ำสูง)",
+    "R55": "AH vs 1X2 Mispricing (AH ขัดกับ 1X2)",
+    "R56": "OU vs 1X2 Mispricing (สูง/ต่ำ ขัดกับ 1X2)",
+    "R57": "1X2 Pool Follow (ตามพูล 1X2)",
+    "R58": "Home Underdog (เจ้าบ้านเป็นรอง)",
+    "R59": "Big Favourite Fade (ต่อหนัก -> รอง)",
+    "R60": "Low Total Big Line (ประตูน้อยแต่ต่อหนัก -> รอง)",
+    "R61": "High Total Under (เส้นสูงมาก -> ต่ำ)",
+    "R62": "Value vs Consensus (ราคาดีสุดคุ้มกว่าราคากลาง)",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
 MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "X1"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
@@ -395,7 +407,7 @@ def build_features(m, P):
         return wr, gf, ga
     f["home_wr5"], f["home_gf5"], f["home_ga5"] = _f5("home")
     f["away_wr5"], f["away_gf5"], f["away_ga5"] = _f5("away")
-    f["feat_v"] = 3                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 ตั้งแต่รุ่น 3 (นัดที่วิเคราะห์หลังเพิ่ม Rule = นอกกลุ่มตัวอย่าง)
+    f["feat_v"] = 4                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 รุ่น 3, R51-R62 รุ่น 4 (นัดที่วิเคราะห์หลังเพิ่ม Rule = นอกกลุ่มตัวอย่าง)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     try:
         f["score_model"] = score_model(f)              # สกอร์ที่น่าจะเป็น (แสดงผลเท่านั้น ไม่มีผลต่อการฟันธง)
@@ -1022,11 +1034,212 @@ def exp50(f, P, c):
         return _exp([(_home_away_mk(f)[1], 1.0)], [], f"R50: ทีมเยือนเสียเฉลี่ย {f['away_ga5']:.1f} ลูก/นัด (เกมรับแน่น) -> ถือทีมเยือน")
 
 
+# ---- R51-R62: Rule จากงานวิจัยตลาดราคา (เพิ่ม 21 พ.ย. 2026) · นับเฉพาะนัดใหม่ (feat_v >= 4) ----
+def _v4(f):
+    return f.get("feat_v", 0) >= 4
+
+
+def _devig_p(a, b):
+    ia, ib = 1.0 / (1.0 + a), 1.0 / (1.0 + b)
+    return ia / (ia + ib)
+
+
+def _flow_pair(f):
+    """(fav_drop, dog_drop) แบบเทียบเรตเดิม ถ้าเรตเปลี่ยน · None ถ้าคำนวณไม่ได้"""
+    if abs(f.get("hdp_shift_fav", 0.0)) < 0.01:
+        return f["fav_drop"], f["dog_drop"]
+    if f.get("fav_drop_eq") is not None:
+        return f["fav_drop_eq"], f["dog_drop_eq"]
+    return flow_equiv(f)
+
+
+def exp51(f, P, c):
+    """R51: ตามเงิน AH แบบเทียบเรตเดิม (ฝั่งที่ราคาถูกลง >= 0.05) · ทดสอบย้อนหลัง 485 ไม้ z +1.33 (เก่า +1.08 / ใหม่ +0.77)"""
+    if not _v4(f):
+        return None
+    fp = _flow_pair(f)
+    if not fp or fp[0] is None:
+        return None
+    fd, dd = fp
+    if max(fd, dd) >= 0.05:
+        mk, v = (f["fav_hdp"], fd) if fd > dd else (f["dog_hdp"], dd)
+        return _exp([(mk, 1.0)], [], f"R51: เทียบที่เรตเปิดแล้ว ราคาฝั่งนี้ถูกลง {v:.2f} (เงินเข้า) -> ตาม")
+
+
+def exp52(f, P, c):
+    """R52: ทีมต่อฟอร์มร้อน (ชนะ >= 4 ใน 5 นัด) -> แทงรอง · ทดสอบย้อนหลัง 94 ไม้ z +1.56 (เก่า +1.18 / ใหม่ +1.03) · ขัดกับ R47 โดยตั้งใจ"""
+    if not _v4(f):
+        return None
+    wr = f.get("fav_win_rate")
+    if wr is not None and wr >= 79:
+        return _exp([(f["dog_hdp"], 1.0)], [], f"R52: ทีมต่อชนะ {wr:.0f}% ใน 5 นัด (ฟอร์มร้อน ราคามักเกินจริง) -> รอง")
+
+
+def exp53(f, P, c):
+    """R53: AH ฝั่งน้ำสูงกว่าอีกฝั่ง >= 0.06 (favourite-longshot bias)"""
+    if not _v4(f):
+        return None
+    d = f["dog_water_c"] - f["fav_water_c"]
+    if abs(d) >= 0.06:
+        return _exp([(f["dog_hdp"] if d > 0 else f["fav_hdp"], 1.0)], [], f"R53: ฝั่งนี้น้ำสูงกว่าอีกฝั่ง {abs(d):.2f}")
+
+
+def exp54(f, P, c):
+    """R54: สูง/ต่ำ ฝั่งน้ำสูงกว่าอีกฝั่ง >= 0.06"""
+    if not _v4(f) or not f.get("has_ou"):
+        return None
+    d = f["over_water_c"] - f["under_water_c"]
+    if abs(d) >= 0.06:
+        return _exp([("OU_OVER" if d > 0 else "OU_UNDER", 1.0)], [], f"R54: ฝั่งนี้น้ำสูงกว่าอีกฝั่ง {abs(d):.2f}")
+
+
+def _fit_x12(f, total=None):
+    """หา (lh, la) ที่ทำให้โอกาสเหย้า/เยือน (และเสมอ ถ้าไม่ล็อกประตูรวม) ตรงกับราคา 1X2 ปัจจุบัน"""
+    import numpy as np
+    x = f.get("x12_cur")
+    if not x or len(x) != 3 or min(x) <= 1:
+        return None
+    pr = [1 / v for v in x]
+    t = sum(pr)
+    pH, pD, pA = (v / t for v in pr)
+    best = None
+    for T in ([total] if total else np.arange(1.6, 4.01, 0.1)):
+        for sp in np.arange(-2.5, 2.51, 0.05):
+            lh, la = (T + sp) / 2, (T - sp) / 2
+            if lh <= 0.05 or la <= 0.05:
+                continue
+            M = _score_grid(lh, la)
+            ph, pd = float(np.tril(M, -1).sum()), float(np.trace(M))
+            err = (ph - pH) ** 2 + (1 - ph - pd - pA) ** 2 + (0 if total else (pd - pD) ** 2)
+            if best is None or err < best[0]:
+                best = (err, lh, la)
+    return best[1:] if best else None
+
+
+def _ev_line(M, kind, side, L, w):
+    """ผลตอบแทนคาดหมายต่อ 1 หน่วยของไม้ (kind hdp/ou, side, เส้น L ในมุมเจ้าบ้านสำหรับ hdp, ค่าน้ำ w) ภายใต้เมทริกซ์สกอร์ M"""
+    G = M.shape[0]
+    ev0 = ev1 = 0.0
+    for h in range(G):
+        for a in range(G):
+            hv = halves_hdp(side, L, h, a) if kind == "hdp" else halves_ou(side, L, h, a)
+            pr = float(M[h, a])
+            ev0 += pr * profit(hv, 0.0)
+            ev1 += pr * profit(hv, 1.0)
+    return ev0 + (ev1 - ev0) * w, ev0, ev1
+
+
+def _fair_from(M, kind, side, L):
+    _, ev0, ev1 = _ev_line(M, kind, side, L, 0.0)
+    a = ev1 - ev0
+    return -ev0 / a if a > 1e-9 else None
+
+
+def exp55(f, P, c):
+    """R55: AH ไม่สอดคล้องกับราคา 1X2 (ค่าน้ำที่ให้ดีกว่าค่ายุติธรรมจาก 1X2 >= 0.06)"""
+    if not _v4(f):
+        return None
+    fit = _fit_x12(f, (f["ou_c"] + 0.2) if f.get("has_ou") else 2.6)
+    if not fit:
+        return None
+    M = _score_grid(*fit)
+    hw, aw = (f["fav_water_c"], f["dog_water_c"]) if f["fav"] == "home" else (f["dog_water_c"], f["fav_water_c"])
+    fh, fa = _fair_from(M, "hdp", "home", f["line_c"]), _fair_from(M, "hdp", "away", f["line_c"])
+    if fh is None or fa is None:
+        return None
+    eh, ea = hw - fh, aw - fa
+    if max(eh, ea) >= 0.06:
+        side = "home" if eh > ea else "away"
+        mk = (f["fav_hdp"] if f["fav"] == side else f["dog_hdp"])
+        return _exp([(mk, 1.0)], [], f"R55: ราคา 1X2 บอกว่าฝั่งนี้ควรได้น้ำ {(fh if side == 'home' else fa):.2f} แต่ได้จริง {(hw if side == 'home' else aw):.2f}")
+
+
+def exp56(f, P, c):
+    """R56: สูง/ต่ำไม่สอดคล้องกับราคา 1X2 (ประตูรวมที่ 1X2 บอก ต่างจากเส้น -> ค่าน้ำดีกว่ายุติธรรม >= 0.06)"""
+    if not _v4(f) or not f.get("has_ou"):
+        return None
+    fit = _fit_x12(f, None)
+    if not fit:
+        return None
+    M = _score_grid(*fit)
+    fo, fu = _fair_from(M, "ou", "over", f["ou_c"]), _fair_from(M, "ou", "under", f["ou_c"])
+    if fo is None or fu is None:
+        return None
+    eo, eu = f["over_water_c"] - fo, f["under_water_c"] - fu
+    if max(eo, eu) >= 0.06:
+        mk = "OU_OVER" if eo > eu else "OU_UNDER"
+        return _exp([(mk, 1.0)], [], f"R56: ราคา 1X2 บอกประตูรวมราว {sum(fit):.2f} -> {('สูง' if mk == 'OU_OVER' else 'ต่ำ')} ได้ราคาดีกว่ายุติธรรม")
+
+
+def exp57(f, P, c):
+    """R57: ตามพูล 1X2 (โอกาสทีมต่อเปลี่ยน >= 3pp)"""
+    if not _v4(f):
+        return None
+    pp = f.get("x12_pp", 0.0)
+    if pp >= 3:
+        return _exp([(f["fav_hdp"], 1.0)], [], f"R57: พูล 1X2 ทีมต่อ +{pp:.1f}pp -> ต่อ")
+    if pp <= -3:
+        return _exp([(f["dog_hdp"], 1.0)], [], f"R57: พูล 1X2 ทีมต่อ {pp:.1f}pp -> รอง")
+
+
+def exp58(f, P, c):
+    """R58: เจ้าบ้านเป็นรอง (ทีมเยือนต่อ >= 0.25) -> เจ้าบ้าน"""
+    if not _v4(f):
+        return None
+    if f["fav"] == "away" and abs(f["line_c"]) >= 0.25:
+        return _exp([(f["dog_hdp"], 1.0)], [], "R58: เจ้าบ้านเป็นรอง -> เจ้าบ้าน")
+
+
+def exp59(f, P, c):
+    """R59: ต่อหนัก >= 1.5 ลูก -> รอง"""
+    if not _v4(f):
+        return None
+    if abs(f["line_c"]) >= 1.5:
+        return _exp([(f["dog_hdp"], 1.0)], [], f"R59: ต่อหนัก {abs(f['line_c']):.2f} ลูก -> รอง")
+
+
+def exp60(f, P, c):
+    """R60: เส้นสูง/ต่ำ <= 2.5 แต่ต่อ >= 1 ลูก -> รอง (เกมประตูน้อยทำให้ต่อหนักยาก)"""
+    if not _v4(f) or not f.get("has_ou"):
+        return None
+    if f["ou_c"] <= 2.5 and abs(f["line_c"]) >= 1:
+        return _exp([(f["dog_hdp"], 1.0)], [], f"R60: สูง/ต่ำ {f['ou_c']:.2f} แต่ต่อ {abs(f['line_c']):.2f} -> รอง")
+
+
+def exp61(f, P, c):
+    """R61: เส้นสูง/ต่ำ >= 3 -> ต่ำ"""
+    if not _v4(f) or not f.get("has_ou"):
+        return None
+    if f["ou_c"] >= 3:
+        return _exp([("OU_UNDER", 1.0)], [], f"R61: เส้นสูง/ต่ำ {f['ou_c']:.2f} (สูงมาก) -> ต่ำ")
+
+
+def exp62(f, P, c):
+    """R62: ราคาดีที่สุดคุ้มกว่าราคากลางที่ตัดค่าต๋งแล้ว >= 4% (value vs consensus)"""
+    if not _v4(f):
+        return None
+    bp = f.get("best_price") or {}
+    best = None
+    for mk, (m, o) in ((f["fav_hdp"], (f["fav_water_c"], f["dog_water_c"])), (f["dog_hdp"], (f["dog_water_c"], f["fav_water_c"])),
+                       ("OU_OVER", (f.get("over_water_c"), f.get("under_water_c"))), ("OU_UNDER", (f.get("under_water_c"), f.get("over_water_c")))):
+        b = bp.get(mk) if isinstance(bp, dict) else None
+        if not b or m is None or o is None or (mk.startswith("OU") and not f.get("has_ou")):
+            continue
+        p = _devig_p(m, o)
+        ev = p * b["price"] - (1 - p)
+        if ev >= 0.04 and (best is None or ev > best[0]):
+            best = (ev, mk, b)
+    if best:
+        return _exp([(best[1], 1.0)], [], f"R62: {best[2].get('book', '')} @{best[2]['price']:.2f} คุ้มกว่าราคากลาง {best[0]:+.1%}")
+
+
 # Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
 EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
                 "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40,
                 "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46,
-                "R47": exp47, "R48": exp48, "R49": exp49, "R50": exp50}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
+                "R47": exp47, "R48": exp48, "R49": exp49, "R50": exp50,
+                "R51": exp51, "R52": exp52, "R53": exp53, "R54": exp54, "R55": exp55, "R56": exp56,
+                "R57": exp57, "R58": exp58, "R59": exp59, "R60": exp60, "R61": exp61, "R62": exp62}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
 
 
 for _rid in ("R28", "R31"):                       # Rule ทดลองที่มี 2 ตลาด
@@ -1090,7 +1303,9 @@ def lifecycle_update(store, f, outcomes):
                     new, why = "active", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} สูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ"
                 else:
                     new, why = "retired", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} ไม่ดีกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ไม่มีประโยชน์"
-        if new == "active" and old == "shadow" and P.get("lock_unlocks"):
+        if new == "active" and old == "shadow" and P.get("lock_unlocks") and rid in (P.get("approved_rules") or []):
+            pass                                       # ผู้ใช้อนุมัติ Rule นี้ไว้แล้ว -> เปิดใช้ได้แม้ล็อกอยู่
+        elif new == "active" and old == "shadow" and P.get("lock_unlocks"):
             if not e.get("ready"):                     # ผ่านเกณฑ์แล้วแต่ล็อกอยู่ -> คงเป็นเงา รอผู้ใช้ปลดล็อก
                 e["ready"], e["ready_at"] = True, seq
                 e["reason"] = why + " — รอเปิดใช้ (ล็อกสถานะ Rule อยู่)"
@@ -1103,6 +1318,92 @@ def lifecycle_update(store, f, outcomes):
             e["status"], e["reason"], e["since"] = new, why, seq
             changes.append((rid, old, new, why))
     return changes
+
+
+def approve_rule(store, rid):
+    """ผู้ใช้อนุมัติ Rule ที่ผ่านเกณฑ์ (ป้าย พร้อมใช้) -> เปิดใช้ทันที และจำไว้ใน params.approved_rules"""
+    P = store.state.setdefault("params", {})
+    ap = list(P.get("approved_rules") or [])
+    if rid not in ap:
+        ap.append(rid)
+    P["approved_rules"] = ap
+    e = (store.state.get("lifecycle") or {}).get(rid)
+    if e and e.get("status") == "shadow" and e.get("ready"):
+        e.update(status="active", since=store.state.get("meta", {}).get("settled", 0),
+                 reason=(e.get("reason") or "").replace(" — รอเปิดใช้ (ล็อกสถานะ Rule อยู่)", "") + " — ผู้ใช้อนุมัติแล้ว")
+        e.pop("ready", None)
+    return e
+
+
+def clv_compute(rec, line, w_mine, w_other):
+    """CLV: ผลตอบแทนคาดหมายของไม้ที่แทงไป ถ้าราคาปิด (ใกล้เตะ) คือราคายุติธรรม
+    line = เรตตอนปิดของฝั่งที่แทง (แฮนดิแคป: เรตของทีมที่เลือก เช่น -0.5 · สูง/ต่ำ: เส้น) · w_mine/w_other = ค่าน้ำตอนปิดของฝั่งที่แทง/อีกฝั่ง
+    คืน dict หรือ None (ตลาด 1X2 ยังไม่รองรับ)"""
+    import numpy as np
+    f, pk = rec["features"], rec["pick"]
+    mk = pk["market"]
+    if not (mk.startswith("HDP") or mk.startswith("OU")):
+        return None
+    sm = f.get("score_model") or score_model(f)
+    if not sm:
+        return None
+    target = _fair_dec(float(w_mine), float(w_other)) - 1.0
+    T0, S0 = sm["lh"] + sm["la"], sm["lh"] - sm["la"]
+    if mk.startswith("HDP"):
+        side = "home" if mk == "HDP_HOME" else "away"
+        Lc = float(line) if side == "home" else -float(line)          # เรตตอนปิดในมุมเจ้าบ้าน
+        Lt = f["line_c"]                                              # เรตที่แทงไป (มุมเจ้าบ้าน)
+        grid_ = [(T0, sp) for sp in np.arange(S0 - 3, S0 + 3.001, 0.02)]
+        kind = "hdp"
+    else:
+        side = "over" if mk == "OU_OVER" else "under"
+        Lc, Lt = float(line), f["ou_c"]
+        grid_ = [(T, S0) for T in np.arange(max(0.4, T0 - 3), T0 + 3.001, 0.02)]
+        kind = "ou"
+    best = None
+    for T, sp in grid_:
+        lh, la = (T + sp) / 2, (T - sp) / 2
+        if lh <= 0.02 or la <= 0.02:
+            continue
+        M = _score_grid(lh, la)
+        fw = _fair_from(M, kind, side, Lc)
+        if fw is None:
+            continue
+        err = abs(fw - target)
+        if best is None or err < best[0]:
+            best = (err, M)
+    if not best:
+        return None
+    w_taken = pk.get("best", {}).get("price") if pk.get("best") else pk["price_win"]
+    ev_med = _ev_line(best[1], kind, side, Lt, pk["price_win"])[0]
+    ev_best = _ev_line(best[1], kind, side, Lt, w_taken)[0]
+    return {"line": float(line), "w_mine": float(w_mine), "w_other": float(w_other),
+            "clv": round(ev_med, 4), "clv_best": round(ev_best, 4), "at": now_th("%Y-%m-%d %H:%M")}
+
+
+def set_clv(store, rid, line, w_mine, w_other):
+    rec = next((r for r in store.history if r["id"] == rid), None)
+    if not rec:
+        return None
+    c = clv_compute(rec, line, w_mine, w_other)
+    if c:
+        rec["clv"] = c
+        store.save()
+    return c
+
+
+def clv_summary(history):
+    """สรุป CLV ของไม้ที่ลงจริงที่มีราคาปิด: n, ค่าเฉลี่ย, % ที่เป็นบวก, z (ค่าเฉลี่ย / ส่วนเบี่ยงเบนมาตรฐาน x รากที่สองของ n)"""
+    import math
+    v = [r["clv"]["clv"] for r in history if r.get("clv") and not r["pick"].get("skip")]
+    vb = [r["clv"].get("clv_best", r["clv"]["clv"]) for r in history if r.get("clv") and not r["pick"].get("skip")]
+    if not v:
+        return {"n": 0}
+    n = len(v)
+    mu = sum(v) / n
+    sd = math.sqrt(sum((x - mu) ** 2 for x in v) / (n - 1)) if n > 1 else 0.0
+    return {"n": n, "mean": mu, "mean_best": sum(vb) / n, "pos": sum(x > 0 for x in v) / n,
+            "z": (mu / sd * math.sqrt(n)) if sd > 0 else 0.0}
 
 
 def market_role(mk, f):
