@@ -15,18 +15,19 @@ st.set_page_config(page_title="Football Quant", page_icon="⚽", layout="centere
 # ---- หน้าตรวจสอบระบบ: เปิดด้วยการเติม ?diag=1 ท้ายลิงก์ (ไม่แสดงข้อมูลลับ) ----
 if st.query_params.get("diag") == "1":
     import platform
-    st.write("✅ เซิร์ฟเวอร์ Streamlit ทำงาน และส่งหน้านี้ถึงเบราว์เซอร์ได้")
+    st.write("✓ เซิร์ฟเวอร์ Streamlit ทำงาน และส่งหน้านี้ถึงเบราว์เซอร์ได้")
     st.write(f"Streamlit {st.__version__} · Python {platform.python_version()}")
     try:
         import football_quant_v58 as _q
-        st.write(f"✅ โหลดตัวคำนวณได้ (Rule {len(_q.RULES)} ข้อ)")
+        st.write(f"✓ โหลดตัวคำนวณได้ (Rule {len(_q.RULES)} ข้อ)")
     except Exception as _e:  # noqa
-        st.write(f"❌ โหลดตัวคำนวณไม่ได้: {str(_e)[:200]}")
+        st.write(f"✕ โหลดตัวคำนวณไม่ได้: {str(_e)[:200]}")
     st.write("ถ้าเห็นหน้านี้ แสดงว่าปัญหาอยู่ที่ส่วนหน้าตา/การแสดงผลของแอปหลัก ไม่ใช่เซิร์ฟเวอร์หรือเครือข่าย")
     st.stop()
 
 import football_quant_v58 as q
 import dashboard as d
+import theme as _theme
 import backtest as bt
 import access
 import story as STORY
@@ -37,9 +38,9 @@ DATA_DIR = os.environ.get("QUANT_DATA_DIR", "quant_data")
 CSS = """
 <style>
 html, body, [class*="css"], .stMarkdown, button, input, textarea { font-family: -apple-system, BlinkMacSystemFont, 'Sukhumvit Set', 'Thonburi', 'Noto Sans Thai', 'Segoe UI', Tahoma, sans-serif !important; }
-.stApp { background: radial-gradient(900px 420px at 12% -8%, rgba(20,184,166,.14), transparent 60%),
-                     radial-gradient(800px 380px at 100% 0%, rgba(99,102,241,.13), transparent 55%),
-                     linear-gradient(180deg, #0b1220 0%, #0d1526 100%); }
+.stApp { background: radial-gradient(900px 420px at 12% -8%, rgba(45,212,191,.14), transparent 60%),
+                     radial-gradient(800px 380px at 100% 0%, rgba(139,147,248,.13), transparent 55%),
+                     linear-gradient(180deg, #0b0f15 0%, #0b0f15 100%); }
 header[data-testid="stHeader"], #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"],
 .stDeployButton, [data-testid="stStatusWidget"] { display: none !important; visibility: hidden !important; }
 .block-container { padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1040px; }
@@ -47,95 +48,96 @@ h1, h2, h3 { letter-spacing: -.01em; }
 
 .hero { display:flex; align-items:center; gap:14px; margin: 4px 0 18px; }
 .hero .logo { width:46px; height:46px; border-radius:14px; display:flex; align-items:center; justify-content:center;
-  font-size:24px; background: linear-gradient(135deg,#14b8a6,#6366f1); box-shadow: 0 8px 24px rgba(20,184,166,.35); }
+  font-size:24px; background: linear-gradient(135deg,#2dd4bf,#8b93f8); box-shadow: 0 8px 24px rgba(45,212,191,.35); }
 .hero .t { font-size:1.45rem; font-weight:700; line-height:1.1; }
-.hero .s { color:#8fa3c0; font-size:.86rem; margin-top:2px; }
+.hero .s { color:#a9b4c4; font-size:.86rem; margin-top:2px; }
 .pill { display:inline-block; padding:2px 10px; border-radius:99px; font-size:.72rem; font-weight:600;
-  background:rgba(20,184,166,.16); color:#5eead4; border:1px solid rgba(94,234,212,.3); margin-left:8px; vertical-align:middle; }
+  background:rgba(45,212,191,.16); color:#2dd4bf; border:1px solid rgba(45,212,191,.3); margin-left:8px; vertical-align:middle; }
 
 .card { background: rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09); border-radius:18px;
   padding:16px 18px; margin: 12px 0; backdrop-filter: blur(6px); }
-.card h4 { margin:0 0 10px; font-size:.82rem; font-weight:600; color:#8fa3c0; letter-spacing:.06em; text-transform:uppercase; }
-.muted { color:#8fa3c0; font-size:.84rem; }
+.card h4 { margin:0 0 10px; font-size:.82rem; font-weight:600; color:#a9b4c4; letter-spacing:.06em; text-transform:uppercase; }
+.muted { color:#a9b4c4; font-size:.84rem; }
 
 .match { text-align:center; }
-.match .lg { color:#8fa3c0; font-size:.8rem; margin-bottom:10px; }
+.match .lg { color:#a9b4c4; font-size:.8rem; margin-bottom:10px; }
 .teams { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
 .team { flex:1; min-width:0; }
 .team .nm { font-size:1.15rem; font-weight:700; margin:4px 0 2px; }
-.team .tg { font-size:.74rem; color:#8fa3c0; }
-.team .rk { display:inline-block; font-size:.74rem; padding:1px 9px; border-radius:99px; background:rgba(255,255,255,.08); color:#c8d4e8; }
-.vs { align-self:center; font-weight:700; color:#6b7f9e; font-size:.9rem; padding:0 6px; }
+.team .tg { font-size:.74rem; color:#a9b4c4; }
+.team .rk { display:inline-block; font-size:.74rem; padding:1px 9px; border-radius:99px; background:rgba(255,255,255,.08); color:#a9b4c4; }
+.vs { align-self:center; font-weight:700; color:#7f8ba0; font-size:.9rem; padding:0 6px; }
 .fc { display:inline-flex; width:22px; height:22px; border-radius:50%; align-items:center; justify-content:center;
-  font-size:.68rem; font-weight:700; margin:6px 2px 0; color:#0b1220; }
-.fc.w { background:#34d399; } .fc.d { background:#fbbf24; } .fc.l { background:#f87171; }
+  font-size:.68rem; font-weight:700; margin:6px 2px 0; color:#0b0f15; }
+.fc.w { background:#3ddc97; } .fc.d { background:#f5b942; } .fc.l { background:#ff6b6b; }
 
 .pick { position:relative; overflow:hidden; border-radius:22px; padding:22px 24px; margin:14px 0;
-  background: linear-gradient(135deg, #0f766e 0%, #14b8a6 55%, #22d3ee 120%); color:#04201d;
-  box-shadow: 0 18px 50px rgba(20,184,166,.28); }
-.pick.low { background: linear-gradient(135deg, #3b4560 0%, #56627f 60%, #6b7aa0 120%); color:#eef2fb; box-shadow: 0 18px 50px rgba(80,95,130,.3); }
+  background: linear-gradient(135deg, #2dd4bf 0%, #2dd4bf 55%, #2dd4bf 120%); color:#042f2b;
+  box-shadow: 0 18px 50px rgba(45,212,191,.28); }
+.pick.low { background: linear-gradient(135deg, #3b4560 0%, #56627f 60%, #6b7aa0 120%); color:#e9eef5; box-shadow: 0 18px 50px rgba(80,95,130,.3); }
 .pick .top { display:flex; justify-content:space-between; align-items:center; }
 .pick .badge { font-size:.74rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase; opacity:.85; }
-.pick .tier { font-size:.74rem; font-weight:700; padding:3px 11px; border-radius:99px; background:rgba(4,32,29,.16); }
+.pick .tier { font-size:.74rem; font-weight:700; padding:3px 11px; border-radius:99px; background:rgba(4,47,43,.16); }
 .pick.low .tier { background:rgba(255,255,255,.16); }
 .pick .lb { font-size:1.75rem; font-weight:700; line-height:1.2; margin:10px 0 4px; }
 .pick .sub { font-size:.86rem; opacity:.85; }
-.bar { height:8px; border-radius:99px; background:rgba(4,32,29,.2); margin:12px 0 4px; overflow:hidden; }
-.bar > div { height:100%; border-radius:99px; background:#04201d; }
+.bar { height:8px; border-radius:99px; background:rgba(4,47,43,.2); margin:12px 0 4px; overflow:hidden; }
+.bar > div { height:100%; border-radius:99px; background:#042f2b; }
 .pick.low .bar { background:rgba(255,255,255,.2); } .pick.low .bar > div { background:#fff; }
 .flags { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
-.flag { font-size:.74rem; padding:3px 10px; border-radius:99px; background:rgba(4,32,29,.18); }
+.flag { font-size:.74rem; padding:3px 10px; border-radius:99px; background:rgba(4,47,43,.18); }
 .pick.low .flag { background:rgba(255,255,255,.14); }
 
 .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
 .tile { background:rgba(255,255,255,.05); border-radius:14px; padding:12px 8px; text-align:center; }
-.tile .k { font-size:.72rem; color:#8fa3c0; } .tile .v { font-size:1.25rem; font-weight:700; margin:2px 0; } .tile .p { font-size:.74rem; color:#7dd3c8; }
+.tile .k { font-size:.72rem; color:#a9b4c4; } .tile .v { font-size:1.25rem; font-weight:700; margin:2px 0; } .tile .p { font-size:.74rem; color:#2dd4bf; }
 .row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid rgba(255,255,255,.06); font-size:.92rem; }
 .row:last-child { border-bottom:none; } .row .l { color:#9fb2cf; } .row .r { font-weight:600; text-align:right; }
-.up { color:#34d399; } .down { color:#f87171; } .flat { color:#c8d4e8; }
+.up { color:#3ddc97; } .down { color:#ff6b6b; } .flat { color:#a9b4c4; }
 
 .sig { padding:10px 0; border-bottom:1px solid rgba(255,255,255,.06); }
 .sig:last-child { border-bottom:none; }
 .sig .h { display:flex; justify-content:space-between; gap:10px; font-size:.9rem; font-weight:600; }
-.sig .h .m { color:#5eead4; font-weight:500; font-size:.82rem; }
+.sig .h .m { color:#2dd4bf; font-weight:500; font-size:.82rem; }
 .sig .b { height:5px; border-radius:99px; background:rgba(255,255,255,.08); margin:7px 0 5px; overflow:hidden; }
-.sig .b > div { height:100%; background:linear-gradient(90deg,#14b8a6,#22d3ee); border-radius:99px; }
-.sig .n { font-size:.8rem; color:#8fa3c0; line-height:1.45; }
+.sig .b > div { height:100%; background:linear-gradient(90deg,#2dd4bf,#2dd4bf); border-radius:99px; }
+.sig .n { font-size:.8rem; color:#a9b4c4; line-height:1.45; }
 
 .chips { display:flex; flex-wrap:wrap; gap:7px; }
-.chip { font-size:.8rem; padding:4px 12px; border-radius:99px; background:rgba(99,102,241,.16); color:#c7d2fe; border:1px solid rgba(165,180,252,.25); }
-.chip.ok { background:rgba(52,211,153,.14); color:#6ee7b7; border-color:rgba(110,231,183,.3); }
-.chip.bad { background:rgba(248,113,113,.14); color:#fca5a5; border-color:rgba(252,165,165,.3); }
-.chip.off { background:rgba(255,255,255,.05); color:#8fa3c0; border-color:rgba(255,255,255,.08); }
-ul.ev { margin:10px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; line-height:1.6; }
+.chip { font-size:.8rem; padding:4px 12px; border-radius:99px; background:rgba(139,147,248,.16); color:#8b93f8; border:1px solid rgba(139,147,248,.25); }
+.chip.ok { background:rgba(61,220,151,.14); color:#3ddc97; border-color:rgba(61,220,151,.3); }
+.chip.bad { background:rgba(255,107,107,.14); color:#ff6b6b; border-color:rgba(255,107,107,.3); }
+.chip.off { background:rgba(255,255,255,.05); color:#a9b4c4; border-color:rgba(255,255,255,.08); }
+ul.ev { margin:10px 0 0; padding-left:18px; color:#a9b4c4; font-size:.86rem; line-height:1.6; }
 
 .stat { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:14px 10px; text-align:center; }
-.stat .v { font-size:1.45rem; font-weight:700; } .stat .k { font-size:.74rem; color:#8fa3c0; }
+.stat .v { font-size:1.45rem; font-weight:700; } .stat .k { font-size:.74rem; color:#a9b4c4; }
 .res { border-radius:16px; padding:14px 18px; margin:12px 0; font-weight:600; }
-.res.win { background:rgba(52,211,153,.14); border:1px solid rgba(110,231,183,.35); color:#6ee7b7; }
-.res.lose { background:rgba(248,113,113,.13); border:1px solid rgba(252,165,165,.35); color:#fca5a5; }
-.res.push { background:rgba(251,191,36,.12); border:1px solid rgba(253,224,71,.3); color:#fde68a; }
+.res.win { background:rgba(61,220,151,.14); border:1px solid rgba(61,220,151,.35); color:#3ddc97; }
+.res.lose { background:rgba(255,107,107,.13); border:1px solid rgba(255,107,107,.35); color:#ff6b6b; }
+.res.push { background:rgba(245,185,66,.12); border:1px solid rgba(245,185,66,.3); color:#f5b942; }
 .hist { display:flex; justify-content:space-between; gap:10px; padding:9px 0; border-bottom:1px solid rgba(255,255,255,.06); font-size:.88rem; }
-.hist:last-child { border-bottom:none; } .hist .a { min-width:0; } .hist .a small { color:#8fa3c0; display:block; }
+.hist:last-child { border-bottom:none; } .hist .a { min-width:0; } .hist .a small { color:#a9b4c4; display:block; }
 
 .stButton > button { width:100%; border-radius:14px; font-weight:600; padding:.65rem 1rem; border:1px solid rgba(255,255,255,.12); }
-.stButton > button[kind="primary"] { background:linear-gradient(135deg,#14b8a6,#6366f1); border:none; color:#fff;
-  box-shadow:0 10px 28px rgba(20,184,166,.28); }
+.stButton > button[kind="primary"] { background:linear-gradient(135deg,#2dd4bf,#8b93f8); border:none; color:#fff;
+  box-shadow:0 10px 28px rgba(45,212,191,.28); }
 .stButton > button[kind="primary"]:hover { filter:brightness(1.08); }
 .stButton > button:disabled { opacity:.42; box-shadow:none !important; cursor:not-allowed; filter:none !important; }
-[data-testid="stFileUploader"] section { border:1.5px dashed rgba(94,234,212,.4); border-radius:16px; background:rgba(255,255,255,.03); }
+[data-testid="stFileUploader"] section { border:1.5px dashed rgba(45,212,191,.4); border-radius:16px; background:rgba(255,255,255,.03); }
 .stTabs [data-baseweb="tab-list"] { gap:6px; border-bottom:none; }
 .stTabs [data-baseweb="tab"] { border-radius:12px; padding:8px 14px; background:rgba(255,255,255,.04); }
-.stTabs [aria-selected="true"] { background:rgba(20,184,166,.18) !important; }
+.stTabs [aria-selected="true"] { background:rgba(45,212,191,.18) !important; }
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { display:none; }
 [data-testid="stExpander"] { border:1px solid rgba(255,255,255,.08); border-radius:14px; background:rgba(255,255,255,.03); }
 .tbl { overflow-x:auto; } .tbl table { width:100%; border-collapse:collapse; font-size:.82rem; }
-.tbl th { text-align:left; color:#8fa3c0; font-weight:600; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.12); }
+.tbl th { text-align:left; color:#a9b4c4; font-weight:600; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.12); }
 .tbl td { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.06); }
 @media (max-width: 640px) { .pick .lb { font-size:1.4rem; } .grid3 { gap:6px; } .team .nm { font-size:1rem; } }
 </style>
 """
 CSS = CSS.replace("</style>", d.CSS + bt.CSS + STORY.RUNTIME_CSS.replace(":host { display:block; }", "") + "</style>")
+CSS = CSS.replace("<style>", "<style>" + _theme.FONT_IMPORT, 1).replace("</style>", _theme.APP_CSS + "</style>")   # design system V2
 if st.query_params.get("plain") != "1":      # ?plain=1 = ปิดการตกแต่ง CSS (ไว้ทดสอบ)
     st.markdown(CSS, unsafe_allow_html=True)
 
@@ -239,7 +241,7 @@ _GKEY = None
 
 
 def _hero(sub):
-    st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Football Quant</div>'
+    st.markdown('<div class="hero"><div class="logo">FQ</div><div><div class="t">Football Quant</div>'
                 f'<div class="s">{esc(sub)}</div></div></div>', unsafe_allow_html=True)
 
 
@@ -249,7 +251,7 @@ if AUTH_ON:
         _hero("เข้าสู่ระบบด้วยบัญชี Google ที่ได้รับเชิญ")
         if st.session_state.pop("idle_out", False):
             st.info(f"หมดเวลาเพราะไม่ได้ใช้งานเกิน {IDLE_SEC // 60} นาที กรุณาเข้าสู่ระบบใหม่")
-        st.button("🔐 เข้าสู่ระบบด้วย Google", type="primary", on_click=st.login)
+        st.button("เข้าสู่ระบบด้วย Google", type="primary", on_click=st.login)
         st.stop()
     EMAIL = access.norm(st.user.get("email"))
     ROLE = access.role_of(EMAIL, ADMINS, access.load(DATA_DIR))
@@ -274,7 +276,7 @@ elif _pw:
     else:
         st.session_state.pop("tok", None)
         _clear_token_param()
-        st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Football Quant</div>'
+        st.markdown('<div class="hero"><div class="logo">FQ</div><div><div class="t">Football Quant</div>'
                     '<div class="s">กรุณาใส่รหัสผ่านเพื่อเข้าใช้งาน</div></div></div>', unsafe_allow_html=True)
         if _tok:
             st.info(f"หมดเวลาเพราะไม่ได้ใช้งานเกิน {IDLE_SEC // 60} นาที กรุณาใส่รหัสผ่านใหม่")
@@ -297,13 +299,13 @@ def idle_guard():
         st.rerun()
 
 
-st.markdown('<div class="hero"><div class="logo">⚽</div><div><div class="t">Football Quant'
+st.markdown('<div class="hero"><div class="logo">FQ</div><div><div class="t">Football Quant'
             '<span class="pill">V5.9</span></div><div class="s">วิเคราะห์ราคาบอลอัตโนมัติ · ฟันธงเดี่ยว · เรียนรู้จากผลจริง</div></div></div>',
             unsafe_allow_html=True)
 ss = st.session_state
 IS_ADMIN = ROLE == "admin"
 if not AUTH_ON and not _pw:
-    st.warning("⚠ ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ (ไม่มี [auth] และไม่มี APP_PASSWORD ใน Secrets) — ทุกคนที่มีลิงก์เข้าใช้ได้เต็มสิทธิ์ Admin "
+    st.warning("! ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ (ไม่มี [auth] และไม่มี APP_PASSWORD ใน Secrets) — ทุกคนที่มีลิงก์เข้าใช้ได้เต็มสิทธิ์ Admin "
                "รวมถึงใช้ API key ของคุณ ถ้าแอปนี้เปิดสาธารณะ ให้ตั้งค่าใน Secrets ทันที")
 if AUTH_ON:
     idle_guard()
@@ -361,7 +363,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
     """ขั้นตอนวิเคราะห์ทั้งหมด (รันในเธรดเบื้องหลัง ห้ามเรียกคำสั่งแสดงผลของ Streamlit) คืนผลลัพธ์หรือ raise"""
     step = job["steps"].append
     research_err = None
-    step("🖼 กำลังอ่านรูปด้วย Gemini ...")
+    step("กำลังอ่านรูปด้วย Gemini ...")
     with tempfile.TemporaryDirectory() as td:
         paths = []
         for i, (name, data) in enumerate(blobs, 1):
@@ -373,7 +375,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
     blobs.clear()                                   # ไม่เก็บรูปไว้ในหน่วยความจำ
     ext_warn = m.pop("warnings", None) or []
     if do_research:
-        step("🔎 กำลังค้นหาข้อมูลบริบทแมตช์ (Google Search) ...")
+        step("กำลังค้นหาข้อมูลบริบทแมตช์ (Google Search) ...")
         try:
             r, srcs, qs = q.research_context(m.get("home"), m.get("away"), m.get("league"), opts["model"], opts["api_key"])
             q.apply_research(m, r, srcs, qs)
@@ -382,7 +384,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
         except Exception as e:  # noqa
             research_err = f"{type(e).__name__}: {str(e)[:150]}"
     if do_research and opts.get("team_news"):
-        step("🩺 กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก ...")
+        step("กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก ...")
         try:
             r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"), opts["model"], opts["api_key"])
             q.apply_team_news(m, r2, srcs2, qs2)
@@ -392,7 +394,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
             m["team_news"] = {"error": "ไฟล์ football_quant_v58.py บน GitHub ยังเป็นรุ่นเก่า — อัปโหลดไฟล์รุ่นล่าสุดแล้วรีบูตแอป"}
         except Exception as e:  # noqa  (ข้อมูลทีมเป็นส่วนเสริม ห้ามทำให้การวิเคราะห์ล้ม)
             m["team_news"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
-    step("🧪 กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
+    step("กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
     chk = json.loads(json.dumps(m))
     chk.pop("warnings", None)
     q.validate_match(chk)
@@ -401,7 +403,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
                 "critical": chk["critical"], "save": save,
                 "match_json": json.dumps(m, ensure_ascii=False, indent=2, default=str)}
     q._job_check()                                  # ถูกยกเลิก/หมดเวลา -> ไม่บันทึกผล
-    step("📊 กำลังวิเคราะห์ราคาและฟันธง ...")
+    step("กำลังวิเคราะห์ราคาและฟันธง ...")
     res = make_result(m, opts, ext_warn, research_err, save)
     res["match_json"] = json.dumps({k: v for k, v in res["m"].items() if k != "warnings"}, ensure_ascii=False, indent=2, default=str)
     return res
@@ -436,13 +438,13 @@ def job_watch(jid):
     if j is None or j["status"] != "running":
         st.rerun()
     sec = int(time.time() - j["started"])
-    steps = "".join(f'<div style="opacity:{1 if i == len(j["steps"]) - 1 else .55}">{"⏳" if i == len(j["steps"]) - 1 else "✅"} {esc(s_[2:].strip())}</div>'
+    steps = "".join(f'<div style="opacity:{1 if i == len(j["steps"]) - 1 else .55}">{"→" if i == len(j["steps"]) - 1 else "✓"} {esc(s_[2:].strip())}</div>'
                     for i, s_ in enumerate(j["steps"]))
-    note = f'<div style="color:#fbbf24;font-size:.85rem;margin-top:6px">⚠ {esc(j["note"])}</div>' if j.get("note") else ""
+    note = f'<div style="color:#f5b942;font-size:.85rem;margin-top:6px">! {esc(j["note"])}</div>' if j.get("note") else ""
     st.markdown(f'<div class="card"><h4>กำลังวิเคราะห์เบื้องหลัง · {sec} วินาที (ไม่เกิน {q.JOB_MAX_SEC // 60} นาที)</h4>{steps}{note}'
                 '<div class="muted" style="margin-top:8px">ปกติใช้ 1–2 นาที · สลับไปแอปอื่นหรือปิดหน้าจอได้ งานยังเดินต่อบนเซิร์ฟเวอร์ กลับมาหน้านี้เมื่อไหร่ก็เห็นผล</div></div>',
                 unsafe_allow_html=True)
-    if st.button("✖ ยกเลิกการวิเคราะห์นี้", key=f"job_cancel_{jid}"):
+    if st.button("✕ ยกเลิกการวิเคราะห์นี้", key=f"job_cancel_{jid}"):
         j["cancelled"] = True                       # เธรดจะหยุดเองเมื่อคำขอที่ค้างอยู่จบ และไม่บันทึกผล · สิทธิ์ถูกคืนอัตโนมัติ
         j["dismissed"] = True
         ss.pop("job_id", None)
@@ -481,7 +483,7 @@ def render_result(res, key="r"):
         if ok:
             st.success("บันทึกสัญญาณแล้ว → ใส่ผลจริงที่แท็บ “บันทึกผล” หลังจบเกม")
     show(SP.analysis_story(res), key=f"story_{key}")
-    st.download_button("⬇ ดาวน์โหลดรายงาน (HTML แบบเล่าเรื่อง เปิดได้ทุกเครื่อง)", SP.analysis_document(res),
+    st.download_button("ดาวน์โหลดรายงาน (HTML แบบเล่าเรื่อง เปิดได้ทุกเครื่อง)", SP.analysis_document(res),
                        file_name=f"{q.slug(f['home'] + '-vs-' + f['away'])}.html", mime="text/html", key=f"dl_{key}")
     with st.expander("รายงานฉบับเต็ม (ข้อความ)"):
         st.text(res["report"])
@@ -494,7 +496,7 @@ def render_result(res, key="r"):
 
 # ---------------------------------------------------------------- แท็บ
 if IS_ADMIN:
-    _tabs = ["🎯 วิเคราะห์", "🏁 บันทึกผล", "📈 สถิติ", "🧪 ทดสอบย้อนหลัง", "💾 สำรองข้อมูล"] + (["👥 ผู้ใช้"] if AUTH_ON else [])
+    _tabs = ["วิเคราะห์", "บันทึกผล", "สถิติ", "ทดสอบย้อนหลัง", "สำรองข้อมูล"] + (["ผู้ใช้"] if AUTH_ON else [])
     _T = st.tabs(_tabs)
     tab1, tab2, tab3, tab4, tab5 = _T[:5]
     tab6 = _T[5] if AUTH_ON else None
@@ -508,7 +510,7 @@ with tab1:
                              type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True,
                              key=f"uploader_{ss['up_ver']}")
     if ss.pop("cleared_msg", False):
-        st.caption("🧹 ล้างรูปที่อัปโหลดออกแล้ว (ระบบไม่เก็บรูปไว้)")
+        st.caption("ล้างรูปที่อัปโหลดออกแล้ว (ระบบไม่เก็บรูปไว้)")
     t1, t2 = st.columns(2)
     do_research = t1.toggle("ค้นหาบริบทแมตช์อัตโนมัติ", value=True, key="opt_research",
                             help="ให้ Gemini ค้นหาข้อมูลจริงทาง Google Search (คิดค่าบริการตามจำนวนคำค้น)")
@@ -521,7 +523,7 @@ with tab1:
         st.markdown(f'<div class="res lose">ใช้สิทธิ์วิเคราะห์ของวันนี้ครบแล้ว · รีเซ็ตในอีก {access.reset_in()} (เที่ยงคืนเวลาไทย)</div>',
                     unsafe_allow_html=True)
     _running = (current_job() or {}).get("status") == "running"
-    go = st.button("🚀 วิเคราะห์อัตโนมัติ", type="primary", disabled=not files or quota_left == 0 or _running)
+    go = st.button("วิเคราะห์อัตโนมัติ", type="primary", disabled=not files or quota_left == 0 or _running)
     box = st.container()
     opts = get_opts()
     if go:
@@ -574,7 +576,7 @@ with tab1:
             items = "".join(f"<li>{esc(x)}</li>" for x in g["critical"])
             st.markdown(f'<div class="res lose">พบข้อมูลที่อาจอ่านผิดจากรูป ({len(g["critical"])} จุด) ระบบหยุดไว้ก่อนวิเคราะห์'
                         f'<ul style="margin:8px 0 0;padding-left:18px;font-weight:400">{items}</ul></div>', unsafe_allow_html=True)
-            st.caption(("ตรวจตัวเลขในรูปเทียบกับข้อมูลที่อ่านได้ (เปิด “⚙ ตั้งค่าขั้นสูง” ด้านล่างเพื่อแก้ แล้วกด “วิเคราะห์ใหม่จากข้อมูลที่แก้ไข”) "
+            st.caption(("ตรวจตัวเลขในรูปเทียบกับข้อมูลที่อ่านได้ (เปิด “ตั้งค่าขั้นสูง” ด้านล่างเพื่อแก้ แล้วกด “วิเคราะห์ใหม่จากข้อมูลที่แก้ไข”) "
                         if IS_ADMIN else "ตรวจตัวเลขในรูปอีกครั้ง ") + "หรือกดวิเคราะห์ต่อเพื่อดูผล (ไม่เสียสิทธิ์เพิ่ม) · "
                        "ถ้าวิเคราะห์ต่อโดยไม่แก้ตัวเลข ไม้นี้จะถูก “ข้ามอัตโนมัติ” เป็นไม้เงา ไม่ควรลงเงิน")
             g1, g2 = st.columns(2)
@@ -586,7 +588,7 @@ with tab1:
                     st.rerun()
                 except ValueError as e:
                     st.error(f"ข้อมูลไม่ครบ/ไม่ถูกต้อง: {e}")
-            if g2.button("✖ ยกเลิก", key="gate_cancel"):
+            if g2.button("✕ ยกเลิก", key="gate_cancel"):
                 ss.pop("gate", None)
                 dismiss_job()
                 if AUTH_ON:
@@ -600,12 +602,12 @@ with tab1:
         st.caption("ผลวิเคราะห์เป็นแบบจำลองเชิงสถิติ ไม่รับประกันผล และไม่ใช่คำแนะนำทางการเงิน")
         st.stop()                                     # User / Local: จบที่หน้าวิเคราะห์
 
-    with st.expander("⚙ ตั้งค่าขั้นสูง"):
+    with st.expander("ตั้งค่าขั้นสูง"):
         st.text_input("โมเดล Gemini", value=q.DEFAULT_MODEL, key="opt_model")
         if not q.get_api_key(secret):
             st.text_input("GEMINI_API_KEY", type="password", key="opt_key", help="ใช้อ่านรูปเท่านั้น ไม่ถูกบันทึก")
         else:
-            st.caption("✅ พบ API key ใน Secrets แล้ว")
+            st.caption("✓ พบ API key ใน Secrets แล้ว")
         st.caption("บังคับบริบท (ติ๊กเพื่อบังคับเป็น “ใช่” ทับผลค้นหา)")
         cols = st.columns(2)
         for i, (k, lb) in enumerate(CTX_LABELS):
@@ -656,12 +658,12 @@ with tab2:
         c1, c2 = st.columns(2)
         hg = c1.number_input(f"ประตู {fe['home']}", 0, 30, 0, key=f"hg_{rid}")
         ag = c2.number_input(f"ประตู {fe['away']}", 0, 30, 0, key=f"ag_{rid}")
-        if st.button("✅ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
+        if st.button("✓ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
             outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
             ss["settle_html"] = SP.settle_result(fe, rec["pick"], int(hg), int(ag), outcomes, r, pf, changes, new, rec.get("life_changes") or [])
             ss.pop("settle_sel", None)
             st.rerun()
-        with st.expander("🗑 ลบรายการนี้ (ถ้าไม่ต้องการ)"):
+        with st.expander("ลบรายการนี้ (ถ้าไม่ต้องการ)"):
             sure = st.checkbox("ยืนยันลบรายการที่เลือกอยู่", key=f"del_{rid}")
             if st.button("ลบรายการนี้", disabled=not sure):
                 q.delete_records(store, [rid])
@@ -692,7 +694,7 @@ with tab2:
         changed = (int(ehg), int(eag)) != tuple(er["score"])
         sure = st.checkbox("ยืนยัน: ระบบจะคำนวณน้ำหนัก Rule และ Rule ที่เรียนรู้ใหม่จากประวัติทั้งหมด (ผลลัพธ์เท่ากับใส่สกอร์ที่ถูกตั้งแต่แรก)", key=f"ed_ok_{eid}")
         b1, b2 = st.columns(2)
-        if b1.button("💾 บันทึกการแก้ไขสกอร์", type="primary", disabled=not (sure and changed)):
+        if b1.button("บันทึกการแก้ไขสกอร์", type="primary", disabled=not (sure and changed)):
             r_ = q.edit_result(store, eid, int(ehg), int(eag))
             ss["edit_msg"] = {"kind": "edit", "title": f"{fe['home']} vs {fe['away']}", **r_}
             st.rerun()
@@ -726,10 +728,10 @@ def stats_live():
         n_done = sum(1 for r in st_.history if r.get("status") == "settled")
         html_ = SP.stats_story(st_.state, st_.history, st_.params)
         if cache and n_done != cache["n"]:
-            st.toast(f"📈 มีผลใหม่ อัปเดตสถิติแล้ว ({n_done} นัด)")
+            st.toast(f"มีผลใหม่ อัปเดตสถิติแล้ว ({n_done} นัด)")
         cache = {"stamp": stamp, "html": html_, "n": n_done, "at": q.now_th("%H:%M:%S")}
         ss["_stats_live"] = cache
-    st.caption(f"🟢 อัปเดตอัตโนมัติ · ข้อมูลล่าสุดเมื่อ {cache['at']} · ตรวจผลใหม่ทุก 10 วินาที")
+    st.caption(f"อัปเดตอัตโนมัติ · ข้อมูลล่าสุดเมื่อ {cache['at']} · ตรวจผลใหม่ทุก 10 วินาที")
     show(cache["html"], key="stats")
 
 
@@ -737,7 +739,7 @@ with tab3:
     store = q.Store(DATA_DIR)
     S = store.state
     stats_live()
-    with st.expander("⚙ ตั้งค่าระบบ: สถานะ “ข้าม” และการแช่แข็งน้ำหนัก Rule"):
+    with st.expander("ตั้งค่าระบบ: สถานะ “ข้าม” และการแช่แข็งน้ำหนัก Rule"):
         P0 = store.params
         a1, a2 = st.columns(2)
         n_skip = a1.toggle("เปิดสถานะ “ข้าม” เมื่อสัญญาณอ่อน/ขัดกัน", value=bool(P0["skip_enabled"]), key="cfg_skip")
@@ -756,7 +758,7 @@ with tab3:
                          value=bool(P0.get("team_news_enabled", False)), key="cfg_tn")
         n_lock = st.toggle("ล็อกสถานะ Rule: ไม่เปิดใช้ Rule ใหม่อัตโนมัติ (Rule ที่ผ่านเกณฑ์จะติดป้าย “พร้อมใช้” แต่ยังไม่มีผลต่อการฟันธง)",
                            value=bool(P0.get("lock_unlocks", True)), key="cfg_lock")
-        if st.button("💾 บันทึกการตั้งค่า", key="cfg_save"):
+        if st.button("บันทึกการตั้งค่า", key="cfg_save"):
             store.state.setdefault("params", {}).update({"skip_enabled": n_skip, "freeze_weights": n_frz,
                                                          "skip_min_strength": float(n_min), "skip_conflict": float(n_cf),
                                                          "skip_move_only": n_mv, "skip_verify_fail": n_vf, "lock_unlocks": n_lock,
@@ -787,12 +789,12 @@ with tab3:
                 store.state["weights"].update(q.DEFAULT_WEIGHTS)
                 store.save()
                 st.success("รีเซ็ตแล้ว (ค่าเริ่มต้นคือแบบที่ทำผลดีที่สุดใน backtest ของข้อมูลชุดปัจจุบัน)")
-    with st.expander("♻ คำนวณสถานะ Rule ใหม่ทั้งหมดจากประวัติ"):
+    with st.expander("คำนวณสถานะ Rule ใหม่ทั้งหมดจากประวัติ"):
         st.caption("ไล่คำนวณการเรียนรู้ใหม่ตั้งแต่นัดแรกตามลำดับที่บันทึกผล ด้วยเกณฑ์ปัจจุบัน: ตัวนับผลของ Rule ผู้สมัครจะครบตั้งแต่วันที่ Rule ถูกสร้าง "
                    "Rule ที่ผ่านเกณฑ์จะเปลี่ยนเป็น “ใช้งาน” และมีผลต่อการฟันธงนัดถัดไป · ไม้ที่บันทึกไว้แล้วและน้ำหนักที่ใช้ฟันธง (ขณะแช่แข็ง) ไม่เปลี่ยน · "
                    "ระบบจะทำขั้นตอนเดียวกันนี้เองทุกครั้งที่คุณแก้สกอร์หรือยกเลิกผล")
         ok_rb = st.checkbox("ยืนยันการคำนวณใหม่ (ควรดาวน์โหลดไฟล์สำรองที่แท็บ “สำรองข้อมูล” ก่อน)", key="rb_ok")
-        if st.button("♻ คำนวณใหม่ทั้งหมด", disabled=not ok_rb, key="rb_go"):
+        if st.button("คำนวณใหม่ทั้งหมด", disabled=not ok_rb, key="rb_go"):
             before_ = {k: v.get("status") for k, v in (store.state.get("lifecycle") or {}).items()}
             n_rb = q.rebuild_learning(store)
             store.save()
@@ -801,7 +803,7 @@ with tab3:
             chg_ = sum(1 for k, v in life_.items() if before_.get(k) != v.get("status"))
             st.success(f"คำนวณใหม่จาก {n_rb} นัดแล้ว · Rule ที่เปลี่ยนสถานะ {chg_} ข้อ · ใช้งานอยู่: {', '.join(act_) if act_ else 'ไม่มี'}")
             cloud_warn()
-    with st.expander("🗑 ลบรายการในประวัติ"):
+    with st.expander("ลบรายการในประวัติ"):
         opts_h = {r["id"]: f"{r['features']['home']} vs {r['features']['away']} ({'ผลแล้ว' if r['status'] == 'settled' else 'รอผล'})"
                   for r in reversed(store.history)}
         pick_ids = st.multiselect("เลือกรายการที่จะลบ", list(opts_h), format_func=lambda i: opts_h[i])
@@ -834,7 +836,7 @@ with tab4:
                 ss["bt"] = bt.run_backtest(store.history, {"disc_min_n": int(bt_min), "score_mode": bt_mode}, permute=int(bt_perm))
         if ss.get("bt"):
             show(SP.backtest_story(ss["bt"]), key="bt")
-            st.download_button("⬇ ดาวน์โหลดรายงาน Backtest (HTML แบบเล่าเรื่อง)", SP.backtest_document(ss["bt"]),
+            st.download_button("ดาวน์โหลดรายงาน Backtest (HTML แบบเล่าเรื่อง)", SP.backtest_document(ss["bt"]),
                                file_name=f"backtest_{q.now_th('%Y%m%d')}.html", mime="text/html", key="dl_bt")
 
 # ================================================================ TAB 4
@@ -849,13 +851,13 @@ with tab5:
          key="sync")
     if cfg_ok:
         c1, c2 = st.columns(2)
-        if c1.button("☁️ ซิงก์ขึ้นคลาวด์ตอนนี้"):
+        if c1.button("ซิงก์ขึ้นคลาวด์ตอนนี้"):
             store.save()
             if rs.get("ok"):
                 st.success("ซิงก์สำเร็จ")
             else:
                 st.error(rs.get("error"))
-        if c2.button("⬇ ดึงข้อมูลจากคลาวด์"):
+        if c2.button("ดึงข้อมูลจากคลาวด์"):
             if store.pull_remote():
                 st.success("ดึงข้อมูลสำเร็จ")
                 st.rerun()
@@ -883,10 +885,10 @@ with tab5:
         st.caption("ถ้าตั้งทั้ง Google Sheets และ Gist ระบบจะใช้ Google Sheets")
     card("ไฟล์สำรอง (ทางเลือก)", '<div class="muted">ดาวน์โหลดเก็บไว้เองอีกชั้นหนึ่ง หรือใช้กู้คืนข้อมูลจากเครื่องอื่น</div>')
     blob = json.dumps({"state": store.state, "history": store.history}, ensure_ascii=False, indent=1)
-    st.download_button("⬇ ดาวน์โหลดไฟล์สำรอง", blob, file_name=f"quant_backup_{q.now_th('%Y%m%d')}.json",
+    st.download_button("ดาวน์โหลดไฟล์สำรอง", blob, file_name=f"quant_backup_{q.now_th('%Y%m%d')}.json",
                        mime="application/json")
     up = st.file_uploader("กู้คืนจากไฟล์สำรอง (เขียนทับข้อมูลปัจจุบัน)", type=["json"], key="restore")
-    if up is not None and st.button("♻ กู้คืน", type="primary"):
+    if up is not None and st.button("กู้คืน", type="primary"):
         try:
             d = json.loads(up.getvalue().decode("utf-8"))
             assert "state" in d and "history" in d
