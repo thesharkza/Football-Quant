@@ -17,7 +17,7 @@ ARMS = ("static", "weights", "full", "legacy")
 ARM_LABEL = {"static": "ไม่เรียนรู้ (Rule เดิม)", "weights": "เรียนรู้เฉพาะน้ำหนัก Rule",
              "full": "เรียนรู้แบบมีด่านคัดกรอง (Rule ใหม่เริ่มเป็นเงา)",
              "legacy": "เรียนรู้แบบเดิม (ใช้ Rule ใหม่ทันที)"}
-ARM_COLOR = {"static": "#94a3b8", "weights": "#fbbf24", "full": "#2dd4bf", "legacy": "#f87171"}
+ARM_COLOR = {"static": "#94a3b8", "weights": "#f5b942", "full": "#2dd4bf", "legacy": "#ff6b6b"}
 MIN_RELIABLE = 30          # ต่ำกว่านี้ถือว่าข้อมูลน้อยเกินสรุป
 
 
@@ -26,7 +26,7 @@ class MemStore:
 
     def __init__(self, params=None):
         self.state = {"weights": dict(q.DEFAULT_WEIGHTS), "rule_stats": {}, "learned_rules": [],
-                      "params": {"freeze_weights": False, **(params or {})}, "meta": {"next_learned": 1, "schema": "6.0"}, "lifecycle": {}}
+                      "params": {"freeze_weights": False, "lock_unlocks": False, **(params or {})}, "meta": {"next_learned": 1, "schema": "6.0"}, "lifecycle": {}}
         self.history = []
         self.inc_stats = {}
 
@@ -212,10 +212,10 @@ CSS = """
 .fq-legend { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:8px; font-size:.78rem; color:var(--mut); }
 .fq-legend i { display:inline-block; width:18px; height:3px; border-radius:3px; margin-right:6px; vertical-align:middle; }
 .fq-verdict { border-radius:16px; padding:16px 18px; border:1px solid var(--line); background:var(--panel); }
-.fq-verdict.full { background:rgba(52,211,153,.1); border-color:rgba(110,231,183,.35); }
-.fq-verdict.static { background:rgba(251,191,36,.08); border-color:rgba(253,224,71,.3); }
+.fq-verdict.full { background:rgba(61,220,151,.1); border-color:rgba(61,220,151,.35); }
+.fq-verdict.static { background:rgba(245,185,66,.08); border-color:rgba(245,185,66,.3); }
 .fq-verdict.small, .fq-verdict.nodiff, .fq-verdict.none { background:rgba(148,163,184,.1); border-color:rgba(148,163,184,.3); }
-.fq-verdict .t { font-size:1.12rem; font-weight:700; margin-bottom:6px; } .fq-verdict ul { margin:6px 0 0; padding-left:18px; color:#b8c7df; font-size:.86rem; line-height:1.6; }
+.fq-verdict .t { font-size:1.12rem; font-weight:700; margin-bottom:6px; } .fq-verdict ul { margin:6px 0 0; padding-left:18px; color:#a9b4c4; font-size:.86rem; line-height:1.6; }
 @media (max-width: 820px) { .fq-cmp { grid-template-columns:minmax(0,1.2fr) repeat(4,minmax(0,1fr)); font-size:.76rem; gap:4px; } }
 """
 
@@ -252,9 +252,9 @@ def _svg_curves(series, n):
         op = 0.35 if v == 0 else 0.08
         dash = ' stroke-dasharray="4 4"' if v == 0 else ""
         parts.append(f'<line x1="{L}" x2="{W - 8}" y1="{y:.1f}" y2="{y:.1f}" stroke="rgba(255,255,255,{op})" stroke-width="1"{dash}/>'
-                     f'<text x="{L - 6}" y="{y + 4:.1f}" text-anchor="end" font-size="11" fill="#8fa3c0">{lab}</text>')
-    parts.append(f'<text x="{L}" y="{H - 6}" font-size="11" fill="#8fa3c0">นัดที่ 1</text>'
-                 f'<text x="{W - 8}" y="{H - 6}" text-anchor="end" font-size="11" fill="#8fa3c0">นัดที่ {n - 1}</text>')
+                     f'<text x="{L - 6}" y="{y + 4:.1f}" text-anchor="end" font-size="11" fill="#a9b4c4">{lab}</text>')
+    parts.append(f'<text x="{L}" y="{H - 6}" font-size="11" fill="#a9b4c4">นัดที่ 1</text>'
+                 f'<text x="{W - 8}" y="{H - 6}" text-anchor="end" font-size="11" fill="#a9b4c4">นัดที่ {n - 1}</text>')
     for k in ARMS:
         s = series[k]
         pts = " ".join(f"{X(i):.1f},{Y(v):.1f}" for i, v in enumerate(s))
@@ -373,7 +373,7 @@ def _chip_ok(t):
 def report_document(res):
     import dashboard as d
     return ('<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            "<title>Backtest · Football Quant</title><style>body{margin:0;padding:20px;background:#0b1220;color:#e6edf7;"
+            "<title>Backtest · Football Quant</title><style>body{margin:0;padding:20px;background:#0b0f15;color:#e9eef5;"
             "font-family:-apple-system,BlinkMacSystemFont,'Sukhumvit Set','Thonburi','Noto Sans Thai','Segoe UI',Tahoma,sans-serif}"
             ".wrap{max-width:1000px;margin:0 auto}h1{font-size:1.2rem;margin:0 0 10px}"
             f"{d.CSS}{CSS}</style></head><body><div class=\"wrap\"><h1>🧪 Backtest: ไม่เรียนรู้ vs เรียนรู้ต่อเนื่อง</h1>{report_html(res)}</div></body></html>")
