@@ -6,9 +6,10 @@
 import html as _html
 
 import football_quant_v58 as q
+import theme as _theme
 
 CSS = """
-.fq { --acc:#14b8a6; --acc2:#6366f1; --up:#34d399; --down:#f87171; --warn:#fbbf24; --mut:#8fa3c0; --txt:#e6edf7;
+.fq { --acc:#2dd4bf; --acc2:#8b93f8; --up:#3ddc97; --down:#ff6b6b; --warn:#f5b942; --mut:#a9b4c4; --txt:#e9eef5;
       --line:rgba(255,255,255,.09); --panel:rgba(255,255,255,.045); font-variant-numeric:tabular-nums; color:var(--txt); }
 .fq * { box-sizing:border-box; }
 .fq-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:12px; margin:12px 0; }
@@ -23,60 +24,60 @@ CSS = """
 .fq-mut { color:var(--mut); } .fq-up { color:var(--up); } .fq-down { color:var(--down); } .fq-warn { color:var(--warn); }
 .fq-small { font-size:.78rem; }
 .fq-chip { display:inline-flex; align-items:center; gap:4px; font-size:.74rem; padding:2px 10px; border-radius:99px;
-           background:rgba(99,102,241,.16); color:#c7d2fe; border:1px solid rgba(165,180,252,.25); white-space:nowrap; }
-.fq-chip.ok { background:rgba(52,211,153,.14); color:#6ee7b7; border-color:rgba(110,231,183,.3); }
-.fq-chip.bad { background:rgba(248,113,113,.14); color:#fca5a5; border-color:rgba(252,165,165,.3); }
-.fq-chip.warn { background:rgba(251,191,36,.12); color:#fde68a; border-color:rgba(253,224,71,.3); }
+           background:rgba(139,147,248,.16); color:#8b93f8; border:1px solid rgba(139,147,248,.25); white-space:nowrap; }
+.fq-chip.ok { background:rgba(61,220,151,.14); color:#3ddc97; border-color:rgba(61,220,151,.3); }
+.fq-chip.bad { background:rgba(255,107,107,.14); color:#ff6b6b; border-color:rgba(255,107,107,.3); }
+.fq-chip.warn { background:rgba(245,185,66,.12); color:#f5b942; border-color:rgba(245,185,66,.3); }
 .fq-chip.off { background:rgba(255,255,255,.05); color:var(--mut); border-color:var(--line); }
-.fq-chip.acc { background:rgba(20,184,166,.16); color:#5eead4; border-color:rgba(94,234,212,.3); }
+.fq-chip.acc { background:rgba(45,212,191,.16); color:#2dd4bf; border-color:rgba(45,212,191,.3); }
 .fq-chips { display:flex; flex-wrap:wrap; gap:6px; }
 
 /* KPI */
 .fq-kpi { display:flex; flex-direction:column; justify-content:space-between; min-height:132px; }
 .fq-kpi .big { font-size:1.55rem; font-weight:700; line-height:1.18; margin:2px 0 6px; }
 .fq-kpi .num { font-size:1.9rem; font-weight:700; line-height:1.1; }
-.fq-hero { background:linear-gradient(135deg, rgba(20,184,166,.22), rgba(99,102,241,.2)); border-color:rgba(94,234,212,.35); }
+.fq-hero { background:linear-gradient(135deg, rgba(45,212,191,.22), rgba(139,147,248,.2)); border-color:rgba(45,212,191,.35); }
 .fq-hero.low { background:linear-gradient(135deg, rgba(100,116,139,.28), rgba(71,85,105,.22)); border-color:rgba(148,163,184,.3); }
 .fq-donut { width:96px; height:96px; border-radius:50%; margin:0 auto;
-            background:conic-gradient(var(--c,#14b8a6) calc(var(--p,0)*1%), rgba(255,255,255,.1) 0); display:grid; place-items:center; }
+            background:conic-gradient(var(--c,#2dd4bf) calc(var(--p,0)*1%), rgba(255,255,255,.1) 0); display:grid; place-items:center; }
 .fq-donut > div { width:74px; height:74px; border-radius:50%; background:#0e182b; display:flex; flex-direction:column;
                   align-items:center; justify-content:center; font-weight:700; font-size:1.2rem; line-height:1.1; }
 .fq-donut small { font-weight:400; font-size:.64rem; color:var(--mut); }
 .fq-lvl { display:flex; align-items:flex-end; gap:5px; height:36px; }
 .fq-lvl i { display:block; width:12px; border-radius:3px; }
-.fq-best { margin-top:8px; padding:7px 10px; border-radius:10px; background:rgba(52,211,153,.12); border:1px solid rgba(110,231,183,.3); font-size:.8rem; color:#a7f3d0; }
+.fq-best { margin-top:8px; padding:7px 10px; border-radius:10px; background:rgba(61,220,151,.12); border:1px solid rgba(61,220,151,.3); font-size:.8rem; color:#a7f3d0; }
 .fq-meter { height:6px; border-radius:99px; background:rgba(255,255,255,.1); overflow:hidden; margin-top:8px; }
-.fq-meter > i { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,var(--acc),#22d3ee); }
+.fq-meter > i { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,var(--acc),#2dd4bf); }
 
 /* ทีม */
 .fq-teams { display:grid; grid-template-columns:1fr auto 1fr; gap:10px; align-items:start; text-align:center; }
 .fq-team .nm { font-size:1.12rem; font-weight:700; margin:6px 0 2px; overflow-wrap:anywhere; }
 .fq-team .rk { display:inline-block; font-size:.72rem; padding:1px 9px; border-radius:99px; background:rgba(255,255,255,.08); }
-.fq-vs { align-self:center; font-weight:700; color:#64748b; padding-top:14px; }
+.fq-vs { align-self:center; font-weight:700; color:#8a96a8; padding-top:14px; }
 .fq-dots { margin:6px 0 4px; } .fq-dot { display:inline-flex; width:21px; height:21px; border-radius:50%; align-items:center; justify-content:center;
-           font-size:.66rem; font-weight:700; margin:0 2px; color:#0b1220; }
-.fq-dot.w{background:#34d399}.fq-dot.d{background:#fbbf24}.fq-dot.l{background:#f87171}
+           font-size:.66rem; font-weight:700; margin:0 2px; color:#0b0f15; }
+.fq-dot.w{background:#3ddc97}.fq-dot.d{background:#f5b942}.fq-dot.l{background:#ff6b6b}
 .fq-kv { display:flex; justify-content:center; gap:14px; flex-wrap:wrap; font-size:.76rem; color:var(--mut); }
 .fq-kv b { color:var(--txt); font-weight:600; }
 .fq-h2h { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top:6px; }
 .fq-h2h span { font-size:.78rem; font-weight:600; padding:3px 10px; border-radius:8px; border:1px solid var(--line); }
-.fq-h2h .w{color:#6ee7b7;background:rgba(52,211,153,.1)}.fq-h2h .d{color:#fde68a;background:rgba(251,191,36,.1)}.fq-h2h .l{color:#fca5a5;background:rgba(248,113,113,.1)}
+.fq-h2h .w{color:#3ddc97;background:rgba(61,220,151,.1)}.fq-h2h .d{color:#f5b942;background:rgba(245,185,66,.1)}.fq-h2h .l{color:#ff6b6b;background:rgba(255,107,107,.1)}
 
 /* กราฟแท่ง */
 .fq-stack { display:flex; height:30px; border-radius:8px; overflow:hidden; font-size:.72rem; font-weight:600; }
 .fq-stack.thin { height:8px; margin-top:5px; opacity:.55; }
-.fq-stack > div { display:flex; align-items:center; justify-content:center; white-space:nowrap; overflow:hidden; color:#04201d; }
+.fq-stack > div { display:flex; align-items:center; justify-content:center; white-space:nowrap; overflow:hidden; color:#042f2b; }
 .fq-stack .h{background:#2dd4bf}.fq-stack .d{background:#94a3b8}.fq-stack .a{background:#818cf8;color:#0b1020}
 .fq-cols3 { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; text-align:center; }
 .fq-cols3 .o { font-size:1.2rem; font-weight:700; } .fq-cols3 .s { font-size:.7rem; color:var(--mut); }
 .fq-line { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 .fq-line .t { font-size:.68rem; color:var(--mut); } .fq-line .v { font-size:1.15rem; font-weight:700; }
 .fq-line .b { padding:4px 10px; border-radius:10px; background:rgba(255,255,255,.06); border:1px solid var(--line); }
-.fq-line .b.cur { background:rgba(20,184,166,.16); border-color:rgba(94,234,212,.4); }
+.fq-line .b.cur { background:rgba(45,212,191,.16); border-color:rgba(45,212,191,.4); }
 .fq-bar { display:grid; grid-template-columns:minmax(0,1.45fr) 1.7fr auto; gap:8px; align-items:center; margin:7px 0; font-size:.82rem; }
 .fq-bar .tr { height:9px; border-radius:99px; background:rgba(255,255,255,.09); overflow:hidden; }
-.fq-bar .tr > i { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,#14b8a6,#22d3ee); }
-.fq-bar .tr > i.alt { background:linear-gradient(90deg,#6366f1,#a78bfa); }
+.fq-bar .tr > i { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,#2dd4bf,#2dd4bf); }
+.fq-bar .tr > i.alt { background:linear-gradient(90deg,#8b93f8,#8b93f8); }
 .fq-bar .n { text-align:right; font-weight:600; white-space:nowrap; }
 .fq-bar .nm { line-height:1.25; font-size:.78rem; overflow-wrap:anywhere; }
 
@@ -91,11 +92,11 @@ CSS = """
 .fq-div .half { height:16px; background:rgba(255,255,255,.06); display:flex; }
 .fq-div .half.l { justify-content:flex-end; border-radius:8px 0 0 8px; }
 .fq-div .half.r { border-radius:0 8px 8px 0; }
-.fq-div .half i { display:block; height:100%; background:#475569; }
+.fq-div .half i { display:block; height:100%; background:#334050; }
 .fq-div .half.l i { border-radius:8px 0 0 8px; } .fq-div .half.r i { border-radius:0 8px 8px 0; }
-.fq-div .half.win i { background:linear-gradient(90deg,#14b8a6,#22d3ee); }
-.fq-div .half.l.win i { background:linear-gradient(270deg,#14b8a6,#22d3ee); }
-.fq-div .half.ban i { background:repeating-linear-gradient(45deg,#475569,#475569 4px,#334155 4px,#334155 8px); opacity:.5; }
+.fq-div .half.win i { background:linear-gradient(90deg,#2dd4bf,#2dd4bf); }
+.fq-div .half.l.win i { background:linear-gradient(270deg,#2dd4bf,#2dd4bf); }
+.fq-div .half.ban i { background:repeating-linear-gradient(45deg,#334050,#334050 4px,#1f2733 4px,#1f2733 8px); opacity:.5; }
 
 /* ตารางสัญญาณ */
 .fq-tbl { width:100%; }
@@ -106,9 +107,9 @@ CSS = """
 .fq-row .rn small { color:var(--mut); display:block; line-height:1.35; margin-top:2px; }
 .fq-row .sc { display:flex; align-items:center; gap:8px; }
 .fq-row .sc .tr { flex:1; height:7px; border-radius:99px; background:rgba(255,255,255,.09); overflow:hidden; }
-.fq-row .sc .tr > i { display:block; height:100%; background:linear-gradient(90deg,#14b8a6,#22d3ee); border-radius:99px; }
+.fq-row .sc .tr > i { display:block; height:100%; background:linear-gradient(90deg,#2dd4bf,#2dd4bf); border-radius:99px; }
 .fq-row .sc b { min-width:44px; text-align:right; }
-.fq-ev { margin:6px 0 0; padding-left:18px; color:#b8c7df; font-size:.84rem; line-height:1.6; }
+.fq-ev { margin:6px 0 0; padding-left:18px; color:#a9b4c4; font-size:.84rem; line-height:1.6; }
 .fq-check { display:grid; grid-template-columns:22px 1fr; gap:6px; font-size:.82rem; margin:6px 0; line-height:1.4; }
 
 /* สถิติ */
@@ -116,7 +117,7 @@ CSS = """
 .fq-pl > div { flex:1; max-width:34px; position:relative; min-width:3px; }
 .fq-pl .mid { position:absolute; left:0; right:0; top:50%; height:1px; background:rgba(255,255,255,.18); }
 .fq-pl i { position:absolute; left:10%; right:10%; border-radius:3px; }
-.fq-pl i.p { bottom:50%; background:#34d399; } .fq-pl i.n { top:50%; background:#f87171; }
+.fq-pl i.p { bottom:50%; background:#3ddc97; } .fq-pl i.n { top:50%; background:#ff6b6b; }
 .fq-w { display:grid; grid-template-columns:minmax(0,1.6fr) 2fr 58px; gap:8px; align-items:center; margin:7px 0; font-size:.8rem; }
 .fq-w .tr { height:8px; border-radius:99px; background:rgba(255,255,255,.09); position:relative; }
 .fq-w .tr > i { display:block; height:100%; border-radius:99px; }
@@ -132,9 +133,9 @@ CSS = """
 .fq-tn h4 { margin:0 0 6px; font-size:.86rem; font-weight:700; }
 .fq-tn .it { font-size:.82rem; line-height:1.5; margin:3px 0; }
 .fq-tn .src { color:var(--mut); font-size:.7rem; margin-left:4px; }
-.fq-tn .na { color:#64748b; font-style:italic; }
-.fq-tn .strike { color:#fca5a5; text-decoration:line-through; opacity:.75; }
-.fq-tn a, .fq-srcs a { color:#5eead4; text-decoration:none; } .fq-srcs a:hover { text-decoration:underline; }
+.fq-tn .na { color:#8a96a8; font-style:italic; }
+.fq-tn .strike { color:#ff6b6b; text-decoration:line-through; opacity:.75; }
+.fq-tn a, .fq-srcs a { color:#2dd4bf; text-decoration:none; } .fq-srcs a:hover { text-decoration:underline; }
 .fq-tn .xg { display:flex; gap:14px; flex-wrap:wrap; } .fq-tn .xg b { font-size:1.05rem; }
 @media (max-width: 820px) { .fq-tn { grid-template-columns:1fr; } }
 
@@ -149,6 +150,8 @@ CSS = """
   .fq-sec { flex-wrap:wrap; row-gap:2px; } .fq-sec small { flex-basis:100%; } .fq-sec::after { display:none; }
 }
 """
+CSS = CSS + _theme.DASH_CSS   # design system V2 (theme.py)
+
 
 
 def e(x):
@@ -194,18 +197,18 @@ def kpi_and_match(res):
     if pick.get("skip"):
         why = "".join(f"<li>{e(x)}</li>" for x in pick.get("skip_reasons", []))
         c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero low"><div class="fq-h"><span>สัญญาณ: ข้ามไม้นี้</span>'
-              f'<span class="fq-chip warn">ไม่นับเป็นไม้ที่เล่น</span></div><div><div class="big">⏭ ข้าม</div>'
+              f'<span class="fq-chip warn">ไม่นับเป็นไม้ที่เล่น</span></div><div><div class="big">ข้าม</div>'
               f'<div class="fq-small fq-mut">ไม้เงา (ติดตามผลเบื้องหลัง): <b>{e(pick["label"])}</b></div>'
               f'<ul class="fq-ev" style="margin-top:4px">{why}</ul></div></div>')
     else:
         bst = pick.get("best")
-        best_html = (f'<div class="fq-best">💰 ราคาดีที่สุด: <b>{e(bst["book"])} @{bst["price"]:.2f}</b> '
+        best_html = (f'<div class="fq-best">ราคาดีที่สุด: <b>{e(bst["book"])} @{bst["price"]:.2f}</b> '
                      f'(ดีกว่าราคามัธยฐาน +{bst["gain"]:.2f} · จุดคุ้มทุน {bst["breakeven"]:.1%} จาก {bst["breakeven_median"]:.1%})</div>') if bst else ""
         c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero{" low" if low else ""}"><div class="fq-h"><span>สัญญาณฟันธงเดี่ยว</span>'
               f'<span class="fq-chip off">ใช้ราคาปัจจุบัน</span></div><div><div class="big">{e(pick["label"])}</div>'
               f'<div class="fq-chips">{"".join(chips)}</div>{best_html}{runner}</div></div>')
     lv = {"ต่ำ": 1, "กลาง": 2, "สูง": 3}.get(pick["tier"], 1)
-    bars = "".join(f'<i style="height:{14 + 10 * i}px;background:{"#14b8a6" if i < lv else "rgba(255,255,255,.12)"}"></i>' for i in range(3))
+    bars = "".join(f'<i style="height:{14 + 10 * i}px;background:{"#2dd4bf" if i < lv else "rgba(255,255,255,.12)"}"></i>' for i in range(3))
     c2 = _card("ระดับสัญญาณ",
                f'<div style="display:flex;align-items:flex-end;gap:14px"><div class="fq-lvl">{bars}</div>'
                f'<div><div class="num">{e(pick["tier"])}</div><div class="fq-small fq-mut">จัดระดับจากคะแนน · ไม่ใช่โอกาสชนะ</div></div></div>',
@@ -387,7 +390,7 @@ def analysis_body(res):
         cbody += '<ul class="fq-ev">' + "".join(f"<li>{e(x)}</li>" for x in rs["evidence"]) + "</ul>"
     conf = {"high": "สูง", "medium": "ปานกลาง", "low": "ต่ำ"}.get(rs.get("confidence"))
     tag = _chip("ค้นหาอัตโนมัติ" + (f" · ความน่าเชื่อถือ{conf}" if conf else ""), "off") if rs else ""
-    vb = "".join(f'<div class="fq-check"><span>{"✅" if ok else "❌"}</span><span>{e(t)}</span></div>' for ok, t in f.get("verify", []))
+    vb = "".join(f'<div class="fq-check"><span>{"✓" if ok else "✕"}</span><span>{e(t)}</span></div>' for ok, t in f.get("verify", []))
     out.append('<div class="fq-sec">บริบทแมตช์ และ การตรวจเหย้า/เยือน</div><div class="fq-grid">')
     out.append(_card("บริบทแมตช์", cbody, "fq-c6", tag))
     out.append(_card("Home/Away Verification", vb or '<div class="fq-mut">ไม่มีข้อมูลการตรวจ</div>', "fq-c6"))
@@ -504,9 +507,9 @@ def report_document(res):
     extra = f'<div class="fq"><div class="fq-sec">คำเตือนจากการอ่านข้อมูล</div><ul class="fq-ev">{warns}</ul></div>' if warns else ""
     return ('<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{e(f["home"])} vs {e(f["away"])} · Football Quant</title><style>'
-            "body{margin:0;padding:20px;background:#0b1220;color:#e6edf7;font-family:-apple-system,BlinkMacSystemFont,'Sukhumvit Set','Thonburi','Noto Sans Thai','Segoe UI',Tahoma,sans-serif}"
-            ".wrap{max-width:1000px;margin:0 auto}h1{font-size:1.2rem;margin:0 0 4px}.sub{color:#8fa3c0;font-size:.8rem;margin-bottom:10px}"
-            f"{CSS}</style></head><body><div class=\"wrap\"><h1>⚽ {e(f['home'])} vs {e(f['away'])}</h1>"
+            "body{margin:0;padding:20px;background:#0b0f15;color:#e9eef5;font-family:-apple-system,BlinkMacSystemFont,'Sukhumvit Set','Thonburi','Noto Sans Thai','Segoe UI',Tahoma,sans-serif}"
+            ".wrap{max-width:1000px;margin:0 auto}h1{font-size:1.2rem;margin:0 0 4px}.sub{color:#a9b4c4;font-size:.8rem;margin-bottom:10px}"
+            f"{CSS}{_theme.report_light_css()}</style></head><body><div class=\"wrap\"><h1>{e(f['home'])} vs {e(f['away'])}</h1>"
             f"<div class=\"sub\">Football Quant V5.9 · รายงานวิเคราะห์ · ไม่ใช่คำแนะนำทางการเงิน ผลลัพธ์ไม่รับประกัน</div>{body}{extra}</div></body></html>")
 
 
@@ -526,7 +529,7 @@ def stats_dashboard(state, history):
     wr = w / (w + l) if (w + l) else 0
     roi = pr / len(done) if done else 0.0
     kp = []
-    kp.append(_card("อัตราชนะ (ไม่นับเจ๊า)", f'<div class="fq-donut" style="--p:{wr * 100:.0f};--c:{"#34d399" if wr >= .5 else "#f87171"}"><div>{wr:.0%}<small>{w}ช / {l}พ</small></div></div>', "fq-c3 fq-m6 fq-kpi"))
+    kp.append(_card("อัตราชนะ (ไม่นับเจ๊า)", f'<div class="fq-donut" style="--p:{wr * 100:.0f};--c:{"#3ddc97" if wr >= .5 else "#ff6b6b"}"><div>{wr:.0%}<small>{w}ช / {l}พ</small></div></div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("กำไรสุทธิ (หน่วย)", f'<div class="num {"fq-up" if pr >= 0 else "fq-down"}">{pr:+.2f}</div><div class="fq-small fq-mut">ROI {roi:+.1%} ต่อไม้</div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("บันทึกผลแล้ว", f'<div class="num">{len(done)}</div><div class="fq-small fq-mut">ชนะ {w} · เจ๊า {p} · แพ้ {l}</div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("รอผล", f'<div class="num">{len(pend)}</div><div class="fq-small fq-mut">สัญญาณที่ยังไม่จบเกม</div>', "fq-c3 fq-m6 fq-kpi"))
@@ -596,7 +599,7 @@ def stats_dashboard(state, history):
     items.sort(key=lambda x: (-x[1], -x[0]))
     wrows = []
     for _, n, k, v, d0 in items[:14]:
-        col = "#34d399" if v > d0 + 0.005 else "#f87171" if v < d0 - 0.005 else "#64748b"
+        col = "#3ddc97" if v > d0 + 0.005 else "#ff6b6b" if v < d0 - 0.005 else "#8a96a8"
         wrows.append(f'<div class="fq-w"><span class="nm">{e(k)} <small>{e(q.RULE_NAMES.get(k, "Rule ที่เรียนรู้เอง"))}</small></span>'
                      f'<div class="tr"><i style="width:{min(v / 3 * 100, 100):.0f}%;background:{col}"></i><u style="left:{min(d0 / 3 * 100, 100):.0f}%"></u></div>'
                      f'<span class="fq-small" style="text-align:right">{v:.2f} <span class="fq-mut">({n})</span></span></div>')
@@ -683,7 +686,7 @@ def score_ladder(history, breakeven=0.525):
         body = ""
         for lo, hi, n, w, l, roi in rows:
             wr = w / (w + l) if (w + l) else 0
-            col = "#34d399" if wr >= breakeven else "#f87171"
+            col = "#3ddc97" if wr >= breakeven else "#ff6b6b"
             body += (f'<div class="fq-row" style="grid-template-columns:1.3fr .6fr 1.6fr .8fr"><span>{lo:.2f} – {hi:.2f}</span><span>{n}</span>'
                      f'<div class="fq-w" style="grid-template-columns:1fr 46px;margin:0"><div class="tr"><i style="width:{wr * 100:.0f}%;background:{col}"></i>'
                      f'<u style="left:{breakeven * 100:.1f}%"></u></div><span class="fq-small" style="text-align:right">{wr:.0%}</span></div>'
