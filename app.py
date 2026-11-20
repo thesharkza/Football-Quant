@@ -658,6 +658,37 @@ with tab2:
         c1, c2 = st.columns(2)
         hg = c1.number_input(f"ประตู {fe['home']}", 0, 30, 0, key=f"hg_{rid}")
         ag = c2.number_input(f"ประตู {fe['away']}", 0, 30, 0, key=f"ag_{rid}")
+        with st.expander("ราคาปิดก่อนเตะ (CLV) · ไม่บังคับ" + (" · บันทึกแล้ว" if rec.get("clv") else "")):
+            pk_ = rec["pick"]
+            mk_ = pk_["market"]
+            if mk_.startswith("HDP") or mk_.startswith("OU"):
+                if mk_.startswith("HDP"):
+                    tm_ = fe["home"] if mk_ == "HDP_HOME" else fe["away"]
+                    l0 = fe["line_c"] if mk_ == "HDP_HOME" else -fe["line_c"]
+                    mine0, oth0 = ((fe["fav_water_c"], fe["dog_water_c"]) if mk_ == fe["fav_hdp"] else (fe["dog_water_c"], fe["fav_water_c"]))
+                    l_lab = f"เรตของ {tm_} ตอนปิด (เช่น −0.5 = ต่อครึ่ง, +0.25 = รองปป.)"
+                else:
+                    l0 = fe["ou_c"]
+                    mine0, oth0 = ((fe["over_water_c"], fe["under_water_c"]) if mk_ == "OU_OVER" else (fe["under_water_c"], fe["over_water_c"]))
+                    l_lab = "เส้นสูง/ต่ำตอนปิด"
+                old_c = rec.get("clv") or {}
+                st.caption("แคปราคาแฮนดิแคปหรือสูง/ต่ำของเจ้าหลักตอนใกล้เตะที่สุด (ราว 5–15 นาทีก่อนเตะ) แล้วกรอกราคาฝั่งที่แทงไปกับอีกฝั่ง "
+                           "ค่าเริ่มต้นคือราคาตอนวิเคราะห์ · CLV ไม่เปลี่ยนไม้และไม่เปลี่ยนการเรียนรู้ ใช้วัดฝีมือเท่านั้น")
+                k1, k2, k3 = st.columns(3)
+                cl_line = k1.number_input(l_lab, -10.0, 10.0, float(old_c.get("line", l0)), 0.25, format="%.2f", key=f"clv_l_{rid}")
+                cl_m = k2.number_input("ค่าน้ำฝั่งที่แทง", 0.3, 2.5, float(old_c.get("w_mine", round(mine0, 2))), 0.01, format="%.2f", key=f"clv_m_{rid}")
+                cl_o = k3.number_input("ค่าน้ำอีกฝั่ง", 0.3, 2.5, float(old_c.get("w_other", round(oth0, 2))), 0.01, format="%.2f", key=f"clv_o_{rid}")
+                if st.button("บันทึกราคาปิด", key=f"clv_go_{rid}"):
+                    c_ = q.set_clv(store, rid, cl_line, cl_m, cl_o)
+                    if c_:
+                        st.success(f"บันทึกแล้ว · CLV {c_['clv'] * 100:+.2f}% (ถ้าแทงราคาดีสุด {c_['clv_best'] * 100:+.2f}%)")
+                        cloud_warn()
+                    else:
+                        st.error("คำนวณ CLV ไม่ได้ ตรวจตัวเลขอีกครั้ง")
+                elif old_c:
+                    st.caption(f"CLV ที่บันทึกไว้: {old_c['clv'] * 100:+.2f}% (ราคาดีสุด {old_c.get('clv_best', old_c['clv']) * 100:+.2f}%) · {old_c.get('at', '')}")
+            else:
+                st.caption("ไม้ตลาด 1X2 ยังไม่รองรับ CLV")
         if st.button("✓ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
             outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
             ss["settle_html"] = SP.settle_result(fe, rec["pick"], int(hg), int(ag), outcomes, r, pf, changes, new, rec.get("life_changes") or [])
@@ -770,6 +801,21 @@ with tab3:
             st.success("บันทึกแล้ว · มีผลกับการวิเคราะห์ครั้งถัดไป (ไม้ที่บันทึกไว้แล้วไม่เปลี่ยน)")
             cloud_warn()
         st.caption("การตั้งค่าเหล่านี้ไม่เปลี่ยนไม้ที่ระบบเลือก แค่ติดป้าย “ข้าม” ให้ไม้ที่ไม่ผ่านเกณฑ์ และนับแยกในสถิติ")
+        ready_ = sorted(k for k, v in (store.state.get("lifecycle") or {}).items() if v.get("status") == "shadow" and v.get("ready"))
+        st.markdown("**อนุมัติ Rule ที่ผ่านเกณฑ์**")
+        if not ready_:
+            st.caption("ยังไม่มี Rule เงาที่ผ่านเกณฑ์ · เมื่อมี จะขึ้นที่นี่ให้อนุมัติทีละข้อ (Rule ที่อนุมัติแล้วจะมีผลต่อการฟันธงนัดถัดไป)")
+        else:
+            lc_ = store.state["lifecycle"]
+            sel_ = st.multiselect("เลือก Rule ที่จะอนุมัติ", ready_, key="cfg_appr",
+                                  format_func=lambda k: f"{k} {q.RULE_NAMES.get(k, '')} · ชนะ {lc_[k]['w']}-{lc_[k]['l']}")
+            ok_ap = st.checkbox("ยืนยัน: Rule ที่เลือกจะเริ่มมีผลต่อการฟันธง", key="cfg_appr_ok")
+            if st.button("อนุมัติ Rule ที่เลือก", disabled=not (sel_ and ok_ap), key="cfg_appr_go"):
+                for k_ in sel_:
+                    q.approve_rule(store, k_)
+                store.save()
+                st.success("อนุมัติแล้ว: " + ", ".join(sel_))
+                cloud_warn()
         sw_ = store.state.get("shadow_weights")
         if sw_:
             live = store.state["weights"]
