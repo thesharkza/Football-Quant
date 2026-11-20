@@ -95,8 +95,8 @@ def _hero(m, f, pick):
     g = pick.get("gate")
     if g:
         rec_ = f" · ที่ผ่านมา {g['w']}-{g['l']} {g['profit']:+.2f}" if g["n"] else ""
-        flags.append(({"pass": "🚦 ช่วงคะแนนผ่าน" + rec_, "fail": "🚦 ช่วงคะแนนไม่ผ่าน" + rec_,
-                       "data": f"🚦 ช่วงคะแนนข้อมูลยังไม่พอ ({g['n']}/{g['min_n']} ไม้)"}[g["status"]],
+        flags.append(({"pass": "ช่วงคะแนนผ่าน" + rec_, "fail": "ช่วงคะแนนไม่ผ่าน" + rec_,
+                       "data": f"ช่วงคะแนนข้อมูลยังไม่พอ ({g['n']}/{g['min_n']} ไม้)"}[g["status"]],
                       {"pass": "ok", "fail": "bad", "data": "off"}[g["status"]]))
     sup, opp = pick.get("support"), pick.get("oppose")
     stats = (f'<div class="s-statline"><div class="v">{num(pick["strength"], 2)}</div><div class="t">คะแนนสัญญาณ</div></div>')
@@ -106,7 +106,7 @@ def _hero(m, f, pick):
     best = ""
     b = pick.get("best")
     if b and not skip:
-        best = (f'<div class="best">💰 ราคาดีที่สุด <b>{e(b["book"])} @{b["price"]:.2f}</b> · ดีกว่าราคามัธยฐาน +{b["gain"]:.2f} · '
+        best = (f'<div class="best">ราคาดีที่สุด <b>{e(b["book"])} @{b["price"]:.2f}</b> · ดีกว่าราคามัธยฐาน +{b["gain"]:.2f} · '
                 f'จุดคุ้มทุน {b["breakeven"]:.1%} (จาก {b["breakeven_median"]:.1%})</div>')
     extra = ""
     if skip:
@@ -116,9 +116,9 @@ def _hero(m, f, pick):
         extra += f'<div class="s-sm" style="margin-top:8px;opacity:.8">ทางเลือกรอง: {e(mth(ru[0][0], f))} ({ru[0][1]:.2f})</div>'
     sm = f.get("score_model")
     if sm:
-        extra += (f'<div class="sc">🔢 ประตูคาดหมาย {sm["lh"]:.2f} – {sm["la"]:.2f} · สกอร์ที่น่าจะเป็น '
+        extra += (f'<div class="sc">ประตูคาดหมาย {sm["lh"]:.2f} – {sm["la"]:.2f} · สกอร์ที่น่าจะเป็น '
                   + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:3]) + "</div>")
-    pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"⏭ ข้ามไม้นี้ · ติดตามเป็นไม้เงา" if skip else "สัญญาณฟันธงเดี่ยว · ราคาปัจจุบัน"}</div>'
+    pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"ข้ามไม้นี้ · ติดตามเป็นไม้เงา" if skip else "สัญญาณฟันธงเดี่ยว · ราคาปัจจุบัน"}</div>'
           f'<div class="lb">{e(pick["label"])}</div>'
           f'<div class="row"><div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
           f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ระดับสัญญาณ</div></div></div>{stats}</div>'
@@ -155,7 +155,7 @@ def _ch_score(f):
         for a in range(6):
             v = g[h][a]
             al = 0.05 + 0.85 * (v / mx)
-            fg = "#04201d" if al > 0.55 else "#cfe9e5"
+            fg = "#042f2b" if al > 0.55 else "#e9eef5"
             tip = f"{f['home']} {h}-{a} {f['away']}\nโอกาส {v:.1%}"
             cells += (f'<div class="c s-pop{" top" if (h, a) in tops else ""}" style="--a:{al:.2f};--fg:{fg};--dl:{.02 * (h + a):.2f}s"{tipattr(tip)}>'
                       f'{h}-{a}<small>{v:.0%}</small></div>')
@@ -191,11 +191,11 @@ def gate_chapter(history, params, n):
             if not tt:
                 cells += '<div class="c" style="--a:.03;opacity:.45">–</div>'
                 continue
-            col = {"pass": "rgba(52,211,153,.30)", "fail": "rgba(248,113,113,.32)", "data": "rgba(148,163,184,.12)"}[stt]
+            col = {"pass": "rgba(61,220,151,.30)", "fail": "rgba(255,107,107,.32)", "data": "rgba(148,163,184,.12)"}[stt]
             wr = f'{tt["wr"]:.0%}' if tt["wr"] is not None else "–"
             tip = (f'{q.GATE_KIND_TH[k]} · คะแนน {q.gate_label(i, edges)}\n{tt["n"]} ไม้ · ชนะ {tt["w"]} แพ้ {tt["l"]} ({wr})\nกำไร {tt["profit"]:+.2f}\n'
                    + {"pass": "ผ่าน → ลงทุนได้", "fail": "ไม่ผ่าน → งดลงทุน", "data": f"ข้อมูลยังไม่ถึง {P['gate_min_n']} ไม้ → ลงทุนตามปกติ"}[stt])
-            cells += (f'<div class="c s-pop" style="background:{col};color:#e6edf7;aspect-ratio:auto;padding:6px 2px"{tipattr(tip)}>'
+            cells += (f'<div class="c s-pop" style="background:{col};color:#e9eef5;aspect-ratio:auto;padding:6px 2px"{tipattr(tip)}>'
                       f'{wr}<small>{tt["profit"]:+.1f} · {tt["n"]}</small></div>')
     grid = (f'<div class="s-heat" style="grid-template-columns:96px repeat({len(edges) + 1}, minmax(0,1fr))">{head}{cells}</div>'
             '<div class="s-note">แต่ละช่อง: อัตราชนะ · กำไร · จำนวนไม้ · เขียว = ผ่าน (ลงทุนได้) · แดง = ไม่ผ่าน (งดลงทุน) · เทา = ข้อมูลยังไม่พอ (ลงทุนตามปกติ) · แตะเพื่อดูรายละเอียด</div>')
@@ -295,7 +295,7 @@ def _ch_flow(f):
     lead = " · ".join(parts)
 
     def linebox(o, c, delta, fmt):
-        col = "#34d399" if delta > 0 else "#f87171" if delta < 0 else "#64748b"
+        col = "#3ddc97" if delta > 0 else "#ff6b6b" if delta < 0 else "#8a96a8"
         return (f'<div class="s-line"><div class="b"><div class="t">เปิด</div><div class="v">{e(fmt(o))}</div></div>'
                 f'<div class="s-flow" style="--fc:{col}"></div><div class="b cur"><div class="t">ปัจจุบัน</div><div class="v">{e(fmt(c))}</div></div>'
                 f'<span class="s-sm" style="color:{col}">{"▲" if delta > 0 else "▼" if delta < 0 else "■"} {delta:+g}</span></div>')
@@ -490,7 +490,7 @@ def _ch_team(m, f):
             continue
         mx = max([0.5] + [v for v in (hv, av) if v is not None]) * 1.15
         xrows += (f'<div class="s-tug s-rv" style="grid-template-columns:52px 1fr 1fr 52px"><div class="sd"><b>{f"{hv:.2f}" if hv is not None else "–"}</b></div>'
-                  f'<div class="half l"><i class="s-fill" style="--w:{(hv or 0) / mx * 100:.0f}%;background:#14b8a6"></i></div>'
+                  f'<div class="half l"><i class="s-fill" style="--w:{(hv or 0) / mx * 100:.0f}%;background:#2dd4bf"></i></div>'
                   f'<div class="half r"><i class="s-fill" style="--w:{(av or 0) / mx * 100:.0f}%;background:#818cf8"></i></div>'
                   f'<div class="sd r"><b>{f"{av:.2f}" if av is not None else "–"}</b></div></div>'
                   f'<div class="s-xs s-mut" style="text-align:center;margin-top:-8px">{e(lab)}</div>')
@@ -507,8 +507,8 @@ def _ch_team(m, f):
             srcs.append(f'{f[s]}: ข้อมูลเก่า ไม่นำไปใช้')
         else:
             srcs.append(f'{f[s]}: ไม่มีข้อมูล')
-    xhead = (f'<div class="s-tug" style="grid-template-columns:1fr 1fr;margin:0 0 6px"><b class="s-sm" style="color:#5eead4">{e(f["home"])}</b>'
-             f'<b class="s-sm" style="color:#a5b4fc;text-align:right">{e(f["away"])}</b></div>')
+    xhead = (f'<div class="s-tug" style="grid-template-columns:1fr 1fr;margin:0 0 6px"><b class="s-sm" style="color:#2dd4bf">{e(f["home"])}</b>'
+             f'<b class="s-sm" style="color:#8b93f8;text-align:right">{e(f["away"])}</b></div>')
     xbody = (xhead + xrows) if xrows else na
     xbody += '<div class="s-note">' + " · ".join(e(x) for x in srcs) + "</div>"
     cards = card("xG / xGA 5 นัดล่าสุด", xbody)
@@ -589,7 +589,7 @@ def _ch_check(res):
         cb += ('<div class="s-note">แหล่งที่ใช้: ' + " · ".join(
             f'<a href="{e(x["uri"])}" target="_blank" rel="noopener">{e(x.get("title") or "ลิงก์")}</a>' for x in srcl) + "</div>")
     ver = f.get("verify") or []
-    vb = "".join(f'<div class="s-kv s-rv" style="--dl:{.07 * i:.2f}s"><span>{e(t)}</span><b class="s-pop" style="--dl:{.07 * i + .2:.2f}s">{"✅" if ok else "❌"}</b></div>'
+    vb = "".join(f'<div class="s-kv s-rv" style="--dl:{.07 * i:.2f}s"><span>{e(t)}</span><b class="s-pop" style="--dl:{.07 * i + .2:.2f}s">{"✓" if ok else "✕"}</b></div>'
                  for i, (ok, t) in enumerate(ver)) or '<div class="s-mut">ไม่มีข้อมูลการตรวจ</div>'
     warns = res.get("warns") or []
     ok_n = sum(1 for ok, _ in ver if ok)
@@ -685,7 +685,7 @@ def stats_story(state, history, params):
     lead = (f'เล่นไปแล้ว <b>{len(done)}</b> ไม้ ชนะ {w} · เจ๊า {p_} · แพ้ {l} — อัตราชนะ <b>{wr:.1%}</b> '
             f'{"สูงกว่า" if wr >= be else "ต่ำกว่า"}จุดคุ้มทุนราว {be:.1%} · กำไรสุทธิ <b class="{"s-up" if pr >= 0 else "s-down"}">{pr:+.2f}</b> หน่วย'
             + (f' · ข้ามไว้ {len(skipped)} ไม้' if skipped else "") + f' · รอผล {len(pend)} นัด')
-    ring_html = S.ring(wr, '<div class="s-big">' + num(wr * 100, 1, suf="%") + "</div>", f"ชนะ {w} / แพ้ {l}", "#34d399" if wr >= be else "#f87171")
+    ring_html = S.ring(wr, '<div class="s-big">' + num(wr * 100, 1, suf="%") + "</div>", f"ชนะ {w} / แพ้ {l}", "#3ddc97" if wr >= be else "#ff6b6b")
     k = (f'<div class="s-kpis">'
          f'<div class="s-kpi wide s-rv">{ring_html}</div>'
          f'<div class="s-kpi s-rv" style="--dl:.08s"><div class="t">กำไรสุทธิ</div><div class="v {"s-up" if pr >= 0 else "s-down"}">{num(pr, 2, sign=True)}</div><div class="d">ROI {roi:+.1%} ต่อไม้</div></div>'
@@ -927,7 +927,7 @@ def backtest_story(res):
     if n < 2:
         return S.plain('<div class="s-empty">ต้องมีรายการที่บันทึกผลแล้วอย่างน้อย 2 นัดจึงจะทดสอบย้อนหลังได้</div>')
     ms, cp, vd = res["metrics"], res["compare"], res["verdict"]
-    tone = {"full": ("w", "✅"), "static": ("p", "⚠️")}.get(vd["tag"], ("p", "🔍"))
+    tone = {"full": ("w", "✓"), "static": ("p", "!")}.get(vd["tag"], ("p", ""))
     hero = (f'<div class="s-result {tone[0]} s-rv" style="text-align:left"><div class="s-kick">ข้อสรุปของการทดสอบ · {n} นัด'
             f'{(" · ข้าม " + str(res["skipped"]) + " นัดที่ข้อมูลไม่ครบ") if res["skipped"] else ""}</div>'
             f'<div class="vd" style="margin:6px 0">{tone[1]} {e(vd["title"])}</div><ul class="s-list">' + "".join(f"<li>{e(x)}</li>" for x in vd["lines"]) + "</ul></div>")
@@ -970,7 +970,7 @@ def backtest_story(res):
     ci = (f'<div style="position:relative;height:46px;margin:6px 4px"><div style="position:absolute;left:0;right:0;top:22px;height:2px;background:rgba(255,255,255,.12)"></div>'
           f'<div style="position:absolute;left:50%;top:8px;height:30px;width:2px;background:rgba(255,255,255,.5)"></div>'
           f'<div class="s-rv" style="position:absolute;left:{pos(cf["lo"]):.1f}%;width:{pos(cf["hi"]) - pos(cf["lo"]):.1f}%;top:16px;height:14px;border-radius:8px;'
-          f'background:{"rgba(52,211,153,.35)" if cf["lo"] > 0 else "rgba(248,113,113,.35)" if cf["hi"] < 0 else "rgba(148,163,184,.35)"}"></div>'
+          f'background:{"rgba(61,220,151,.35)" if cf["lo"] > 0 else "rgba(255,107,107,.35)" if cf["hi"] < 0 else "rgba(148,163,184,.35)"}"></div>'
           f'<div style="position:absolute;left:calc({pos(cf["mean"]):.1f}% - 6px);top:17px;width:12px;height:12px;border-radius:50%;background:#fff"></div>'
           f'<span class="s-xs s-mut" style="position:absolute;left:50%;top:38px;transform:translateX(-50%)">0</span></div>'
           f'<div class="s-sm" style="text-align:center">ค่าเฉลี่ย <b>{cf["mean"]:+.3f}</b> ต่อไม้ · ช่วงเชื่อมั่น 95% [{cf["lo"]:+.3f}, {cf["hi"]:+.3f}] · P(ต่าง &gt; 0) ≈ {cf["p_pos"]:.0%}</div>')
@@ -1059,7 +1059,7 @@ def settle_result(fe, pick, hg, ag, outcomes, r, pf, changes, new, life_changes)
         body += card("สถานะ Rule ผู้สมัครที่เปลี่ยน", "".join(
             f'<div class="s-kv"><span><b>{e(x[0])}</b> {lab.get(x[1], x[1])} → {lab.get(x[2], x[2])}<div class="s-xs s-mut">{e(x[3])}</div></span></div>' for x in life_changes), dl=.15)
     if new:
-        body += card("🧠 Rule ใหม่ที่ระบบสร้าง (เริ่มเป็นเงา)", "".join(
+        body += card("Rule ใหม่ที่ระบบสร้าง (เริ่มเป็นเงา)", "".join(
             f'<div class="s-kv"><span><b>{e(r_["id"])}</b> {e(" + ".join(r_["tags"]))} → {e(q.ROLE_TH[r_["role"]])}</span>'
             f'<b>ชนะ {r_["wr"]:.0%} จาก {r_["n"]} นัด</b></div>' for r_ in new), dl=.2)
     return S.plain(hero + f'<div class="s-grid">{body}</div>')
@@ -1100,7 +1100,7 @@ def sync_story(be_name, ok, err, last, n_hist, n_settled, n_rules, sheets):
     else:
         st_ = ("ok", f"ซิงก์อัตโนมัติเปิดอยู่ · {be_name}", f"ซิงก์ล่าสุด {last or 'ยังไม่มีการซิงก์ในรอบนี้'}")
     k = {"ok": "w", "bad": "l"}[st_[0]]
-    hero = (f'<div class="s-result {k} s-rv" style="text-align:left"><div class="s-kick">เก็บข้อมูลถาวร</div><div class="vd">{"☁️" if st_[0] == "ok" else "⚠️"} {e(st_[1])}</div>'
+    hero = (f'<div class="s-result {k} s-rv" style="text-align:left"><div class="s-kick">เก็บข้อมูลถาวร</div><div class="vd">{"" if st_[0] == "ok" else "!"} {e(st_[1])}</div>'
             f'<div class="s-sm" style="margin-top:4px">{e(st_[2])}</div>'
             + ('<div class="s-note">ใน Google Sheets มีชีต “ประวัติ” และ “น้ำหนัก Rule” ให้เปิดดูได้</div>' if sheets else "") + "</div>")
     kp = (f'<div class="s-kpis"><div class="s-kpi s-rv"><div class="t">รายการทั้งหมด</div><div class="v">{num(n_hist, 0)}</div></div>'
