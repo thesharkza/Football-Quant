@@ -401,6 +401,8 @@ def build_features(m, P):
         f["score_model"] = score_model(f)              # สกอร์ที่น่าจะเป็น (แสดงผลเท่านั้น ไม่มีผลต่อการฟันธง)
     except Exception:  # noqa
         f["score_model"] = None
+    fe = flow_equiv(f)                                 # การไหลของเงินแบบเทียบเรตเดียวกัน (แสดงผลเท่านั้น ยังไม่มีผลต่อการฟันธง)
+    f["fav_drop_eq"], f["dog_drop_eq"] = fe if fe else (None, None)
     return f
 
 
@@ -1740,7 +1742,9 @@ def render_report(m, f, contribs, pick, store):
     L.append("  [3] การไหลของราคา (อ้างอิงเทียบราคาเปิดเท่านั้น)")
     L.append(f"    • เรต HDP เปิด {fmt_line(f['line_o'])} -> ปัจจุบัน {fmt_line(f['line_c'])}  "
              f"(ทีมต่อ{'แรงขึ้น' if f['hdp_shift_fav'] > 0 else 'อ่อนลง' if f['hdp_shift_fav'] < 0 else 'คงที่'} {f['hdp_shift_fav']:+g})")
-    adj_txt = (f"  [ปรับตามเรตแล้ว: ทีมต่อ {-f['fav_drop_adj']:+.2f} / ทีมรอง {-f['dog_drop_adj']:+.2f}]"
+    _fe = (f.get("fav_drop_eq"), f.get("dog_drop_eq")) if f.get("fav_drop_eq") is not None else (flow_equiv(f) or (None, None))
+    adj_txt = ((f"  [เทียบเรตเดิมแล้ว: ทีมต่อ {-_fe[0]:+.2f} ({'เงินเข้า' if _fe[0] > 0 else 'เงินออก'}) / ทีมรอง {-_fe[1]:+.2f}]"
+                if _fe[0] is not None else "  [เทียบเรตเดิมไม่ได้]")
                if abs(f["hdp_shift_fav"]) >= 0.01 else "")
     L.append(f"    • ค่าน้ำทีมต่อเปลี่ยน {-f['fav_drop']:+.2f} | ทีมรองเปลี่ยน {-f['dog_drop']:+.2f}{adj_txt}")
     L.append(f"    • พูล 1X2 ทีมต่อ {f['x12_pp']:+.1f}pp | ทีมรอง {f['dog_pp']:+.1f}pp | ความขัดแย้งพูล↔HDP = {f['conflict']:.0%}"
@@ -1938,6 +1942,46 @@ def _score_grid(lh, la, rho=SCORE_RHO, G=SCORE_MAXG):
     M[..., 1, 0] *= np.clip(1 + la * rho, 0, None)
     M[..., 1, 1] *= (1 - rho)
     return M / M.sum(axis=(-1, -2), keepdims=True)
+
+
+def flow_equiv(f):
+    """การไหลของค่าน้ำแบบเทียบเรตเดียวกัน (ใช้เมื่อเรต HDP เปลี่ยน)
+    เอาการกระจายสกอร์จากราคาปัจจุบัน (score_model) มาคิดว่า 'ถ้าตอนนี้ยังเปิดที่เรตเดิม ค่าน้ำยุติธรรมควรเป็นเท่าไร'
+    แล้วเทียบกับค่าน้ำยุติธรรมตอนเปิด (ตัดค่าต๋งแล้ว)  -> (fav_eq, dog_eq) โดย + = ค่าน้ำลด = เงินเข้าฝั่งนั้น
+    คืน None ถ้าคำนวณไม่ได้"""
+    if abs(f.get("hdp_shift_fav", 0.0)) < 0.01:
+        return None
+    sm = f.get("score_model")
+    if not sm:                                         # ระเบียนเก่าที่ไม่ได้เก็บ score_model
+        try:
+            sm = score_model(f)
+        except Exception:  # noqa
+            sm = None
+    if not sm:
+        return None
+    try:
+        M = _score_grid(sm["lh"], sm["la"])
+        G = M.shape[0]
+        lo = f["line_o"]
+        fo = f["fav_water_c"] + f["fav_drop"]
+        do = f["dog_water_c"] + f["dog_drop"]
+        out = []
+        for side, wo, wx in ((f["fav"], fo, do), (f["dog"], do, fo)):
+            open_fair = _fair_dec(wo, wx) - 1.0
+            ev0 = ev1 = 0.0
+            for h in range(G):
+                for a in range(G):
+                    hv = halves_hdp(side, lo, h, a)
+                    pr = float(M[h, a])
+                    ev0 += pr * profit(hv, 0.0)
+                    ev1 += pr * profit(hv, 1.0)
+            a_ = ev1 - ev0
+            if a_ <= 1e-9:
+                return None
+            out.append(round(open_fair - (-ev0 / a_), 3))
+        return tuple(out)
+    except Exception:  # noqa
+        return None
 
 
 def score_model(f):
