@@ -272,9 +272,18 @@ def _ch_flow(f):
     else:
         parts.append(f'เรตแฮนดิแคปนิ่งที่ <b>{e(_fl(f["line_c"]))}</b> ตั้งแต่เปิดราคา')
     fd, dd = f.get("fav_drop", 0.0), f.get("dog_drop", 0.0)
+    raw_fd, raw_dd = fd, dd
+    eq = None
+    if abs(sh) >= 0.01:                                  # เรตเปลี่ยน: ค่าน้ำดิบเทียบข้ามเรตไม่ได้ -> ใช้ค่าที่เทียบเรตเดิมแล้ว
+        eq = (f.get("fav_drop_eq"), f.get("dog_drop_eq")) if f.get("fav_drop_eq") is not None else q.flow_equiv(f)
+        if eq and eq[0] is not None:
+            fd, dd = eq
     side = max(((f["fav_name"], fd), (f["dog_name"], dd)), key=lambda x: x[1])
-    if side[1] >= 0.03:
-        parts.append(f'ค่าน้ำฝั่ง <b>{e(side[0])}</b> ลดลง {side[1]:.2f} ซึ่งมักแปลว่ามีเงินเข้าฝั่งนี้')
+    if abs(sh) >= 0.01 and not (eq and eq[0] is not None):
+        parts.append("เรตเปลี่ยนจึงเทียบค่าน้ำตรง ๆ ไม่ได้ · ดูทิศเงินจากพูล 1X2 ในบทที่ 1 แทน")
+    elif side[1] >= 0.03:
+        how = "เมื่อเทียบที่เรตเดิมแล้ว ราคาฝั่ง" if abs(sh) >= 0.01 else "ค่าน้ำฝั่ง"
+        parts.append(f'{how} <b>{e(side[0])}</b> ถูกลง {side[1]:.2f} ซึ่งมักแปลว่ามีเงินเข้าฝั่งนี้')
     else:
         parts.append("ค่าน้ำแทบไม่ขยับ ยังไม่เห็นเงินไหลชัดเจน")
     if f.get("has_ou"):
@@ -298,8 +307,11 @@ def _ch_flow(f):
     hb = linebox(f["line_o"], f["line_c"], sh, _fl)
     hb += wrow(f'{f["fav_name"]} (ต่อ)', f["fav_water_c"], fd, "t", .1) + wrow(f'{f["dog_name"]} (รอง)', f["dog_water_c"], dd, "i", .2)
     if abs(sh) >= 0.01:
-        hb += (f'<div class="s-note">เรตเปลี่ยน ค่าน้ำจึงขยับตามธรรมชาติ · ค่าที่ปรับตามเรตแล้ว: ทีมต่อ {-f.get("fav_drop_adj", 0):+.2f} · '
-               f'ทีมรอง {-f.get("dog_drop_adj", 0):+.2f}</div>')
+        if eq and eq[0] is not None:
+            hb += (f'<div class="s-note">เรตเปลี่ยน ค่าน้ำดิบจึงขยับตามเรต (ทีมต่อ {-raw_fd:+.2f} · ทีมรอง {-raw_dd:+.2f}) ซึ่งไม่ใช่สัญญาณ · '
+                   'ป้ายเงินเข้า/ออกด้านบนคิดแบบเทียบที่เรตเปิดเดิมแล้ว (ใช้การกระจายสกอร์จากราคาปัจจุบัน)</div>')
+        else:
+            hb += '<div class="s-note">เรตเปลี่ยนและเทียบเรตเดิมไม่ได้ · ป้ายด้านบนเป็นค่าน้ำดิบ อย่าอ่านเป็นทิศเงิน</div>'
     hb += '<div class="s-note">เรตแสดงในมุมเจ้าบ้าน (ติดลบ = เจ้าบ้านต่อ)</div>'
     cards = card("แฮนดิแคป", hb, chip(f"ทีมต่อ {f['fav_name']}", "acc"))
     if f.get("has_ou"):
