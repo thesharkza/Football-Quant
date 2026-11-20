@@ -692,6 +692,20 @@ def stats_story(state, history, params):
          f'<div class="s-kpi s-rv" style="--dl:.16s"><div class="t">ไม้ที่เล่น</div><div class="v">{num(len(done), 0)}</div><div class="d">เจ๊า {p_} · ข้าม {len(skipped)}</div></div>'
          f'<div class="s-kpi s-rv" style="--dl:.24s"><div class="t">Drawdown สูงสุด</div><div class="v s-warn">{num(dd, 2)}</div><div class="d">หน่วย จากจุดสูงสุด</div></div>'
          f'<div class="s-kpi s-rv" style="--dl:.32s"><div class="t">รอผล</div><div class="v">{num(len(pend), 0)}</div><div class="d">สัญญาณที่ยังไม่จบเกม</div></div></div>')
+    cs = q.clv_summary(history)
+    if cs["n"]:
+        verdict = ("ราคาที่ได้ดีกว่าราคาปิดอย่างมีนัยสำคัญ: หลักฐานว่าระบบมีฝีมือ" if cs["z"] >= 2 else
+                   "ราคาที่ได้แย่กว่าราคาปิดอย่างมีนัยสำคัญ: ระบบแทงช้ากว่าตลาดหรือเลือกฝั่งผิด" if cs["z"] <= -2 else
+                   ("ยังน้อยเกินสรุป · ควรมีอย่างน้อย 100 ไม้" if cs["n"] < 100 else "ยังแยกจากความบังเอิญไม่ได้"))
+        k += (f'<div class="s-card s-rv" style="margin-top:12px"><div class="s-h"><span>CLV · เทียบราคาที่แทงกับราคาปิดก่อนเตะ</span>'
+              f'{chip(str(cs["n"]) + " ไม้", "acc")}</div><div class="s-kpis">'
+              f'<div class="s-kpi"><div class="t">CLV เฉลี่ย (ราคากลาง)</div><div class="v {"s-up" if cs["mean"] >= 0 else "s-down"}">{num(cs["mean"] * 100, 2, sign=True, suf="%")}</div>'
+              f'<div class="d">ผลตอบแทนคาดหมายต่อไม้ ถ้าราคาปิดคือราคายุติธรรม</div></div>'
+              f'<div class="s-kpi"><div class="t">CLV เฉลี่ย (ราคาดีสุด)</div><div class="v {"s-up" if cs["mean_best"] >= 0 else "s-down"}">{num(cs["mean_best"] * 100, 2, sign=True, suf="%")}</div>'
+              f'<div class="d">ถ้าแทงที่เจ้าที่ให้ราคาดีที่สุด</div></div>'
+              f'<div class="s-kpi"><div class="t">ไม้ที่ CLV เป็นบวก</div><div class="v">{num(cs["pos"] * 100, 0, suf="%")}</div>'
+              f'<div class="d">z = {cs["z"]:+.2f}</div></div></div>'
+              f'<div class="s-note">{e(verdict)} · CLV ใช้เวลาพิสูจน์ฝีมือเร็วกว่าดูผลแพ้ชนะมาก เพราะไม่ขึ้นกับดวงของสกอร์</div></div>')
     chs.append(("st-all", "ภาพรวม", chapter("st-all", 1, "บทที่ 1 · ภาพรวม", "ผลงานทั้งหมดจนถึงวันนี้", lead, k)))
 
     # 2 เส้นทางกำไร
