@@ -296,10 +296,20 @@ def analysis_body(res):
     hbody = (f'<div class="fq-line"><div class="b"><div class="t">เปิด</div><div class="v">{e(q.fmt_line(f["line_o"]))}</div></div>'
              f'<span class="{cl}">→</span><div class="b cur"><div class="t">ปัจจุบัน</div><div class="v">{e(q.fmt_line(f["line_c"]))}</div></div>'
              f'<span class="{cl} fq-small">{ar} ทีมต่อ{word} {sh:+g}</span></div>')
-    hbody += _water_bar(f"{f['fav_name']} (ต่อ)", f["fav_water_c"], f["fav_drop"])
-    hbody += _water_bar(f"{f['dog_name']} (รอง)", f["dog_water_c"], f["dog_drop"], alt=True)
+    fd, dd = f["fav_drop"], f["dog_drop"]
+    eq = None
+    if abs(sh) >= 0.01:                                  # เรตเปลี่ยน: ใช้ค่าที่เทียบเรตเดิมแล้วแทนค่าน้ำดิบ
+        eq = (f.get("fav_drop_eq"), f.get("dog_drop_eq")) if f.get("fav_drop_eq") is not None else q.flow_equiv(f)
+        if eq and eq[0] is not None:
+            fd, dd = eq
+    hbody += _water_bar(f"{f['fav_name']} (ต่อ)", f["fav_water_c"], fd)
+    hbody += _water_bar(f"{f['dog_name']} (รอง)", f["dog_water_c"], dd, alt=True)
     if abs(sh) >= 0.01:
-        hbody += (f'<div class="fq-small fq-mut">ปรับตามเรตแล้ว: ทีมต่อ {-f["fav_drop_adj"]:+.2f} · ทีมรอง {-f["dog_drop_adj"]:+.2f}</div>')
+        if eq and eq[0] is not None:
+            hbody += (f'<div class="fq-small fq-mut">เรตเปลี่ยน: สีเงินเข้า/ออกคิดแบบเทียบที่เรตเปิดเดิมแล้ว · '
+                      f'ค่าน้ำดิบ ทีมต่อ {-f["fav_drop"]:+.2f} · ทีมรอง {-f["dog_drop"]:+.2f} (ขยับตามเรต ไม่ใช่สัญญาณ)</div>')
+        else:
+            hbody += '<div class="fq-small fq-mut">เรตเปลี่ยนและเทียบเรตเดิมไม่ได้ · สีด้านบนเป็นค่าน้ำดิบ อย่าอ่านเป็นทิศเงิน</div>'
     hbody += (f'<div class="fq-small fq-mut" style="margin-top:6px">พูล 1X2 ทีมต่อ {f["x12_pp"]:+.1f}pp · ความขัดแย้ง {f["conflict"]:.0%}</div>')
     out.append(_card("แฮนดิแคป", hbody, "fq-c4", _chip(f"ทีมต่อ {f['fav_name']}", "acc")))
 
