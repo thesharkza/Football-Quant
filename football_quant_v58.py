@@ -2143,6 +2143,8 @@ def render_report(m, f, contribs, pick, store):
         st_th = {"pass": "ผ่าน · ลงทุนได้", "fail": "ไม่ผ่าน · งดลงทุน" if g["enabled"] else "ไม่ผ่าน (ตัวกรองปิดอยู่)", "data": "ข้อมูลยังไม่พอ · ลงทุนตามปกติ"}[g["status"]]
         L.append(f"\n🚦 ตัวกรองช่วงคะแนน: {g['kind_th']} คะแนน {g['label']} — {st_th}"
                  + (f" (ที่ผ่านมา {g['w']}-{g['l']}, กำไร {g['profit']:+.2f} จาก {g['n']} ไม้)" if g["n"] else ""))
+        if g["n"] >= 20 and g["profit"] <= -2.0 and not pick.get("skip"):
+            L.append("   → ช่วงคะแนนติดลบ: แนะนำข้ามไม้นี้ตอนแทงจริง (ไม่ต้องแทงสวน)")
     L += team_news_lines(m)
     return "\n".join(L)
 
