@@ -1238,8 +1238,9 @@ _OPP_MK = {"HDP_HOME": "HDP_AWAY", "HDP_AWAY": "HDP_HOME", "OU_OVER": "OU_UNDER"
 
 
 def exp63(f, P, c):
-    """R63: ช่วงคะแนนผ่าน -> ตามไม้ที่ระบบเลือก · ไม่ผ่าน -> สวน (ข้อเสนอของผู้ใช้ 21 พ.ย. 2026)
-    สถานะช่วงคะแนนคิดจากนัดก่อนหน้าเท่านั้น ตอนวิเคราะห์ (gate_check เก็บไว้ใน f["r63"]) · นับเฉพาะนัดใหม่"""
+    """R63: ช่วงคะแนน (ประเภทไม้ x ช่วงคะแนน) ที่มีอย่างน้อย 20 ไม้ และกำไรสะสม >= +2.0 -> ตามไม้ที่ระบบเลือก ·
+    <= -2.0 -> สวน · ไม่ถึง 20 ไม้หรืออยู่ระหว่าง -2.0 ถึง +2.0 -> ไม่ทำงาน (ข้อเสนอของผู้ใช้ 21 พ.ย. 2026)
+    สถิติช่วงคะแนนคิดจากนัดก่อนหน้าเท่านั้น ตอนวิเคราะห์ (gate_check เก็บไว้ใน f["r63"]) · นับเฉพาะนัดใหม่"""
     r = f.get("r63")
     if not _v4(f) or not r:
         return None
@@ -1858,11 +1859,14 @@ def gate_check(store, f, pick, history=None):
          "enabled": bool(P.get("gate_enabled", True)), "min_n": P.get("gate_min_n", 20)}
     pick["gate"] = g
     f.pop("r63", None)
-    if stt in ("pass", "fail") and pick["market"] in _OPP_MK and f.get("feat_v", 0) >= 4:   # R63 (Rule เงา)
-        mk63 = pick["market"] if stt == "pass" else _OPP_MK[pick["market"]]
-        f["r63"] = {"market": mk63, "status": stt,
-                    "note": (f"R63: ช่วงคะแนน{g['kind_th']} {g['label']} {'ผ่าน' if stt == 'pass' else 'ไม่ผ่าน'} "
-                             f"(ที่ผ่านมา {g['w']}-{g['l']} {g['profit']:+.2f}) -> {'ตามไม้ที่ระบบเลือก' if stt == 'pass' else 'สวนไม้ที่ระบบเลือก'}")}
+    thr63 = P.get("r63_profit", 2.0)
+    if (t and t["n"] >= P.get("r63_min_n", 20) and abs(t["profit"]) >= thr63
+            and pick["market"] in _OPP_MK and f.get("feat_v", 0) >= 4):                   # R63 (Rule เงา)
+        up = t["profit"] > 0
+        mk63 = pick["market"] if up else _OPP_MK[pick["market"]]
+        f["r63"] = {"market": mk63, "status": "follow" if up else "fade",
+                    "note": (f"R63: ช่วงคะแนน{g['kind_th']} {g['label']} ที่ผ่านมา {g['w']}-{g['l']} {g['profit']:+.2f} "
+                             f"({'≥ +' if up else '≤ −'}{thr63:.1f}) -> {'ตามไม้ที่ระบบเลือก' if up else 'สวนไม้ที่ระบบเลือก'}")}
         if rule_status(store, "R63", "manual") == "shadow":
             pick.setdefault("shadow", []).append({"id": "R63", "kind": "manual", "market": mk63,
                                                   "role": market_role(mk63, f), "note": f["r63"]["note"]})
