@@ -170,6 +170,7 @@ RULE_NAMES = {
     "R60": "Low Total Big Line (ประตูน้อยแต่ต่อหนัก -> รอง)",
     "R61": "High Total Under (เส้นสูงมาก -> ต่ำ)",
     "R62": "Value vs Consensus (ราคาดีสุดคุ้มกว่าราคากลาง)",
+    "R63": "Score-band Follow/Fade (ช่วงคะแนนผ่านตาม ไม่ผ่านสวน)",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
 MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "X1"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
@@ -1233,13 +1234,26 @@ def exp62(f, P, c):
         return _exp([(best[1], 1.0)], [], f"R62: {best[2].get('book', '')} @{best[2]['price']:.2f} คุ้มกว่าราคากลาง {best[0]:+.1%}")
 
 
+_OPP_MK = {"HDP_HOME": "HDP_AWAY", "HDP_AWAY": "HDP_HOME", "OU_OVER": "OU_UNDER", "OU_UNDER": "OU_OVER"}
+
+
+def exp63(f, P, c):
+    """R63: ช่วงคะแนนผ่าน -> ตามไม้ที่ระบบเลือก · ไม่ผ่าน -> สวน (ข้อเสนอของผู้ใช้ 21 พ.ย. 2026)
+    สถานะช่วงคะแนนคิดจากนัดก่อนหน้าเท่านั้น ตอนวิเคราะห์ (gate_check เก็บไว้ใน f["r63"]) · นับเฉพาะนัดใหม่"""
+    r = f.get("r63")
+    if not _v4(f) or not r:
+        return None
+    return _exp([(r["market"], 1.0)], [], r["note"])
+
+
 # Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
 EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
                 "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40,
                 "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46,
                 "R47": exp47, "R48": exp48, "R49": exp49, "R50": exp50,
                 "R51": exp51, "R52": exp52, "R53": exp53, "R54": exp54, "R55": exp55, "R56": exp56,
-                "R57": exp57, "R58": exp58, "R59": exp59, "R60": exp60, "R61": exp61, "R62": exp62}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
+                "R57": exp57, "R58": exp58, "R59": exp59, "R60": exp60, "R61": exp61, "R62": exp62,
+                "R63": exp63}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
 
 
 for _rid in ("R28", "R31"):                       # Rule ทดลองที่มี 2 ตลาด
@@ -1843,6 +1857,15 @@ def gate_check(store, f, pick, history=None):
          "wr": t["wr"] if t else None, "profit": round(t["profit"], 2) if t else 0.0,
          "enabled": bool(P.get("gate_enabled", True)), "min_n": P.get("gate_min_n", 20)}
     pick["gate"] = g
+    f.pop("r63", None)
+    if stt in ("pass", "fail") and pick["market"] in _OPP_MK and f.get("feat_v", 0) >= 4:   # R63 (Rule เงา)
+        mk63 = pick["market"] if stt == "pass" else _OPP_MK[pick["market"]]
+        f["r63"] = {"market": mk63, "status": stt,
+                    "note": (f"R63: ช่วงคะแนน{g['kind_th']} {g['label']} {'ผ่าน' if stt == 'pass' else 'ไม่ผ่าน'} "
+                             f"(ที่ผ่านมา {g['w']}-{g['l']} {g['profit']:+.2f}) -> {'ตามไม้ที่ระบบเลือก' if stt == 'pass' else 'สวนไม้ที่ระบบเลือก'}")}
+        if rule_status(store, "R63", "manual") == "shadow":
+            pick.setdefault("shadow", []).append({"id": "R63", "kind": "manual", "market": mk63,
+                                                  "role": market_role(mk63, f), "note": f["r63"]["note"]})
     if stt == "fail" and g["enabled"] and not pick.get("skip"):
         pick["skip"] = True
         pick["gate_suspended"] = True
