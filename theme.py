@@ -153,6 +153,10 @@ STORY_CSS = """
 .s-pick .k { color:var(--accent); opacity:1; font-size:11px; letter-spacing:.06em; font-weight:600; }
 .s-pick .lb { font-size:32px; line-height:40px; font-weight:600; letter-spacing:-.01em; }
 .s-pick .s-chip { background:var(--accent-tint); color:var(--accent); border-color:transparent; }
+.s-pick .s-chip.ok { background:var(--pos-tint); color:var(--pos); }
+.s-pick .s-chip.bad { background:var(--neg-tint); color:var(--neg); }
+.s-pick .s-chip.warn { background:var(--warn-tint); color:var(--warn); }
+.s-pick .s-chip.off { background:var(--surface-2); color:var(--text-3); border-color:var(--border); }
 .s-pick .best { background:var(--surface-2); color:var(--text-2); border-radius:8px; }
 .s-pick .sc { color:var(--text-2); opacity:1; }
 .s-statline .t { color:var(--text-2); opacity:1; font-size:11px; letter-spacing:.06em; font-weight:600; }
@@ -165,6 +169,11 @@ STORY_CSS = """
 .s-pick.skip { background:var(--surface); border:1px dashed var(--border-strong); color:var(--text); }
 .s-pick.low .s-chip, .s-pick.skip .s-chip { background:var(--surface-2); color:var(--text-2); border-color:var(--border); }
 .s-pick.low .best, .s-pick.skip .best { background:var(--surface-2); }
+
+.s-negband { margin-top:14px; padding:10px 14px; border-radius:12px; background:var(--neg-tint); color:var(--text);
+  display:flex; flex-direction:column; gap:2px; border:1px solid rgba(255,107,107,0.35); }
+.s-negband b { color:var(--neg); font-size:15px; line-height:22px; font-weight:600; }
+.s-negband span { color:var(--text-2); font-size:13px; line-height:20px; }
 
 /* form + scores */
 .s-dot { border-radius:4px; width:22px; height:22px; color:var(--on-signal); font-family:%(mono)s; font-weight:600; font-size:11px; }
