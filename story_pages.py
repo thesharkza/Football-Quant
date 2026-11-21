@@ -98,6 +98,11 @@ def _hero(m, f, pick):
         flags.append(({"pass": "ช่วงคะแนนผ่าน" + rec_, "fail": "ช่วงคะแนนไม่ผ่าน" + rec_,
                        "data": f"ช่วงคะแนนข้อมูลยังไม่พอ ({g['n']}/{g['min_n']} ไม้)"}[g["status"]],
                       {"pass": "ok", "fail": "bad", "data": "off"}[g["status"]]))
+    neg_band = ""
+    if g and g.get("n", 0) >= 20 and g.get("profit", 0.0) <= -2.0 and not skip:   # ใช้ตัดสินตอนแทงจริง: ช่วงคะแนนติดลบ -> ข้าม (ไม่ต้องสวน)
+        neg_band = (f'<div class="s-negband" role="note"><b>ช่วงคะแนนติดลบ → แนะนำข้าม</b>'
+                    f'<span>{e(g["kind_th"])} คะแนน {e(g["label"])} ที่ผ่านมา {g["w"]}-{g["l"]} {g["profit"]:+.2f} จาก {g["n"]} ไม้ · '
+                    f'ไม่ต้องแทงสวน (ทดสอบแล้วการสวนไม่ได้ผลดีกว่าการข้าม)</span></div>')
     sup, opp = pick.get("support"), pick.get("oppose")
     stats = (f'<div class="s-statline"><div class="v">{num(pick["strength"], 2)}</div><div class="t">คะแนนสัญญาณ</div></div>')
     if sup is not None and opp is not None:
@@ -122,7 +127,7 @@ def _hero(m, f, pick):
           f'<div class="lb">{e(pick["label"])}</div>'
           f'<div class="row"><div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
           f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ระดับสัญญาณ</div></div></div>{stats}</div>'
-          f'{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
+          f'{neg_band}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
     return (f'<div class="s-hero s-rv"><div class="comp">{e(comp)}</div><div class="s-vs">{team("home")}<div class="s-vsx">VS</div>{team("away")}</div>'
             f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ระดับสัญญาณจัดจากคะแนนของ Rule (ต่ำ &lt; 1.2 ≤ กลาง &lt; 2.5 ≤ สูง) '
             f'ไม่ใช่โอกาสชนะ · เลื่อนลงเพื่อดูว่าระบบคิดอย่างไรทีละขั้น</div></div>')
