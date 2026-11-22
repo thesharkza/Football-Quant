@@ -1401,6 +1401,7 @@ CLOSING_PROMPT = """รูปนี้คือตารางราคาบอ
 ให้อ่านเฉพาะ "แถวล่าง = ราคาปัจจุบัน" ของทุกเจ้ามือที่เห็นในรูป
 กติกา:
 1. ห้ามเดา อ่านไม่ชัดให้ข้ามเจ้านั้น ถ้ารูปไม่ใช่ตลาด @MARKET@ ของคู่นี้ ให้ตอบ {"ok":false,"reason":"..."}
+   ชื่อเจ้ามือให้อ่านจากโลโก้ (เช่น GK8, 1XBET, bet365, CrownBet, OLE777) ถ้าชื่อซ้ำหลายแถวให้ต่อท้ายตามลำดับจากบนลงล่าง เช่น "1XBET #1", "1XBET #2"
 2. แปลงเรตเอเชียนเป็นทศนิยม: 0/0.5 -> 0.25, 0.5/1 -> 0.75, 1/1.5 -> 1.25 ; "-0/0.5" = -0.25
 3. แฮนดิแคป: home_line = เรตของเจ้าบ้านตามที่แสดงในคอลัมน์เจ้าบ้าน (ติดลบ = เจ้าบ้านต่อ, บวก = เจ้าบ้านรอง, 0 = เสมอ)
    home_water/away_water = ค่าน้ำแบบฮ่องกง (เช่น 0.92)
@@ -1408,6 +1409,17 @@ CLOSING_PROMPT = """รูปนี้คือตารางราคาบอ
 5. ตอบเป็น JSON ล้วน ไม่มีข้อความอื่น:
 แฮนดิแคป: {"ok":true,"market":"hdp","books":[{"book":"GK8","home_line":-0.5,"home_water":0.99,"away_water":0.93}]}
 สูง/ต่ำ: {"ok":true,"market":"ou","books":[{"book":"GK8","line":2.5,"over_water":0.91,"under_water":1.01}]}"""
+
+
+def _book_key(name):
+    """ทำชื่อเจ้ามือให้เทียบกันได้: 'GK8' / '1XBET #1' / '1xbet#2' / '1XET' -> ('gk8',1) / ('1xbet',1) / ('1xbet',2) / ('1xbet',1)"""
+    import re as _re
+    s_ = str(name or "").lower()
+    m_ = _re.search(r"#\s*(\d+)", s_)
+    idx = int(m_.group(1)) if m_ else 1
+    base = _re.sub(r"#\s*\d+", "", s_)
+    base = _re.sub(r"[^a-z0-9]", "", base).replace("1xet", "1xbet")
+    return base, idx
 
 
 def read_closing_image(rec, image_bytes, mime, model, api_key):
@@ -1443,9 +1455,21 @@ def read_closing_image(rec, image_bytes, mime, model, api_key):
             rows.append((L, hw, aw, b.get("book", "")))
     if not rows:
         raise ValueError("อ่านราคาจากรูปไม่ได้ ลองแคปให้เห็นตารางชัด ๆ หรือกรอกเอง")
-    line = _st.median_low([r[0] for r in rows])                    # เรตที่เจ้าส่วนใหญ่ใช้
-    same = [r for r in rows if abs(r[0] - line) < 1e-6]
-    hw, aw = _st.median([r[1] for r in same]), _st.median([r[2] for r in same])
+    # 1) ใช้เจ้ามือเดียวกับที่ให้ราคาดีที่สุดตอนวิเคราะห์ (ราคาที่แทงจริง) 2) ไม่พบ -> ค่ากลางของเจ้าส่วนใหญ่
+    want = (rec["pick"].get("best") or {}).get("book")
+    hit = None
+    if want:
+        wk = _book_key(want)
+        hit = next((r for r in rows if _book_key(r[3]) == wk), None) or \
+            next((r for r in rows if _book_key(r[3])[0] == wk[0]), None)
+    if hit:
+        line, hw, aw = hit[0], hit[1], hit[2]
+        same, source = [hit], f"เจ้าเดิม {hit[3]}"
+    else:
+        line = _st.median_low([r[0] for r in rows])                # เรตที่เจ้าส่วนใหญ่ใช้
+        same = [r for r in rows if abs(r[0] - line) < 1e-6]
+        hw, aw = _st.median([r[1] for r in same]), _st.median([r[2] for r in same])
+        source = (f"ไม่พบ {want} ในรูป · ใช้ค่ากลาง {len(same)} เจ้า" if want else f"ค่ากลาง {len(same)} เจ้า")
     if is_hdp:
         mine_home = (mk == "HDP_HOME")
         out_line = line if mine_home else -line
@@ -1453,15 +1477,17 @@ def read_closing_image(rec, image_bytes, mime, model, api_key):
     else:
         out_line = line
         w_mine, w_other = (hw, aw) if mk == "OU_OVER" else (aw, hw)
-    return {"line": out_line, "w_mine": round(w_mine, 3), "w_other": round(w_other, 3), "books": len(same),
+    return {"line": out_line, "w_mine": round(w_mine, 3), "w_other": round(w_other, 3), "books": len(same), "source": source,
             "detail": [{"book": r[3], "line": r[0], "a": r[1], "b": r[2]} for r in rows]}
 
 
-def set_clv(store, rid, line, w_mine, w_other):
+def set_clv(store, rid, line, w_mine, w_other, source=None):
     rec = next((r for r in store.history if r["id"] == rid), None)
     if not rec:
         return None
     c = clv_compute(rec, line, w_mine, w_other)
+    if c and source:
+        c["source"] = source
     if c:
         rec["clv"] = c
         store.save()
