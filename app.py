@@ -662,21 +662,17 @@ with tab2:
             pk_ = rec["pick"]
             mk_ = pk_["market"]
             if mk_.startswith("HDP") or mk_.startswith("OU"):
-                if mk_.startswith("HDP"):
-                    tm_ = fe["home"] if mk_ == "HDP_HOME" else fe["away"]
-                    l0 = fe["line_c"] if mk_ == "HDP_HOME" else -fe["line_c"]
-                    mine0, oth0 = ((fe["fav_water_c"], fe["dog_water_c"]) if mk_ == fe["fav_hdp"] else (fe["dog_water_c"], fe["fav_water_c"]))
-                    l_lab = f"เรตของ {tm_} ตอนปิด (เช่น −0.5 = ต่อครึ่ง, +0.25 = รองปป.)"
-                else:
-                    l0 = fe["ou_c"]
-                    mine0, oth0 = ((fe["over_water_c"], fe["under_water_c"]) if mk_ == "OU_OVER" else (fe["under_water_c"], fe["over_water_c"]))
-                    l_lab = "เส้นสูง/ต่ำตอนปิด"
                 old_c = rec.get("clv") or {}
-                st.caption(f"แคปตาราง{'แฮนดิแคป' if mk_.startswith('HDP') else 'สูง/ต่ำ'}ของคู่นี้ตอนใกล้เตะที่สุด (ราว 5–15 นาทีก่อนเตะ) แล้วส่งรูปมา "
-                           "ระบบจะอ่านราคาปัจจุบันของทุกเจ้าและคำนวณ CLV ให้ · ตรวจตัวเลขด้านล่างก่อนกดบันทึก · "
-                           "CLV ไม่เปลี่ยนไม้และไม่เปลี่ยนการเรียนรู้ ใช้วัดฝีมือเท่านั้น")
+                bk_ = (pk_.get("best") or {}).get("book")
+                st.caption(f"แคปตาราง{'แฮนดิแคป' if mk_.startswith('HDP') else 'สูง/ต่ำ'}ของคู่นี้ตอนใกล้เตะที่สุด (ราว 5–15 นาทีก่อนเตะ) แล้วส่งรูป "
+                           f"ระบบจะอ่านราคาปัจจุบันของ{('เจ้าเดิมที่ให้ราคาดีที่สุดตอนวิเคราะห์ (' + bk_ + ')') if bk_ else 'ทุกเจ้า'} "
+                           "แล้วคำนวณและบันทึก CLV ให้ทันที · CLV ไม่เปลี่ยนไม้และไม่เปลี่ยนการเรียนรู้")
+                if old_c:
+                    st.success(f"CLV ที่บันทึกไว้: {old_c.get('clv_best', old_c['clv']) * 100:+.2f}% ที่ราคาที่แทง "
+                               f"(ราคากลาง {old_c['clv'] * 100:+.2f}%) · ราคาปิด {old_c['line']:+.2f} @{old_c['w_mine']:.2f}/{old_c['w_other']:.2f}"
+                               + (f" · {old_c['source']}" if old_c.get("source") else "") + f" · {old_c.get('at', '')}")
                 up_ = st.file_uploader("รูปตารางราคาตอนใกล้เตะ", type=["png", "jpg", "jpeg", "webp"], key=f"clv_img_{rid}")
-                if up_ is not None and st.button("อ่านราคาจากรูป", key=f"clv_read_{rid}", type="primary"):
+                if up_ is not None and st.button("อ่านราคาและบันทึก CLV", key=f"clv_read_{rid}", type="primary"):
                     o_ = get_opts()
                     if not o_["api_key"]:
                         st.error("ยังไม่ได้ตั้งค่า GEMINI_API_KEY")
@@ -684,31 +680,37 @@ with tab2:
                         try:
                             with st.spinner("กำลังอ่านราคาจากรูป ..."):
                                 rd_ = q.read_closing_image(rec, up_.getvalue(), up_.type or "image/png", o_["model"], o_["api_key"])
-                            ss[f"clv_l_{rid}"], ss[f"clv_m_{rid}"], ss[f"clv_o_{rid}"] = float(rd_["line"]), float(rd_["w_mine"]), float(rd_["w_other"])
-                            ss[f"clv_rd_{rid}"] = rd_
-                            st.rerun()
+                            c_ = q.set_clv(store, rid, rd_["line"], rd_["w_mine"], rd_["w_other"], source=rd_["source"])
+                            if c_:
+                                st.success(f"บันทึกแล้ว · CLV {c_['clv_best'] * 100:+.2f}% ที่ราคาที่แทง (ราคากลาง {c_['clv'] * 100:+.2f}%) · "
+                                           f"ราคาปิด {rd_['line']:+.2f} @{rd_['w_mine']:.2f}/{rd_['w_other']:.2f} · {rd_['source']}")
+                                st.caption("อ่านได้: " + " · ".join(f"{d['book']} {d['line']:+.2f} {d['a']:.2f}/{d['b']:.2f}" for d in rd_["detail"][:8]))
+                                cloud_warn()
+                            else:
+                                st.error("คำนวณ CLV ไม่ได้")
                         except (ValueError, SystemExit) as ex_:
                             st.error(str(ex_))
-                rd_ = ss.get(f"clv_rd_{rid}")
-                if rd_:
-                    st.caption(f"อ่านได้ {len(rd_['detail'])} เจ้า · ใช้ค่ากลางของ {rd_['books']} เจ้าที่อยู่เรตเดียวกัน · "
-                               + " · ".join(f"{d['book']} {d['line']:+.2f} {d['a']:.2f}/{d['b']:.2f}" for d in rd_["detail"][:6]))
-                k1, k2, k3 = st.columns(3)
-                for k_, v_ in ((f"clv_l_{rid}", old_c.get("line", l0)), (f"clv_m_{rid}", old_c.get("w_mine", round(mine0, 2))),
-                               (f"clv_o_{rid}", old_c.get("w_other", round(oth0, 2)))):
-                    ss.setdefault(k_, float(v_))
-                cl_line = k1.number_input(l_lab, -10.0, 10.0, step=0.25, format="%.2f", key=f"clv_l_{rid}")
-                cl_m = k2.number_input("ค่าน้ำฝั่งที่แทง", 0.3, 2.5, step=0.01, format="%.2f", key=f"clv_m_{rid}")
-                cl_o = k3.number_input("ค่าน้ำอีกฝั่ง", 0.3, 2.5, step=0.01, format="%.2f", key=f"clv_o_{rid}")
-                if st.button("บันทึกราคาปิด", key=f"clv_go_{rid}"):
-                    c_ = q.set_clv(store, rid, cl_line, cl_m, cl_o)
-                    if c_:
-                        st.success(f"บันทึกแล้ว · CLV {c_['clv'] * 100:+.2f}% (ถ้าแทงราคาดีสุด {c_['clv_best'] * 100:+.2f}%)")
-                        cloud_warn()
+                if st.checkbox("แก้ตัวเลขเอง (กรณีอ่านรูปผิด)", key=f"clv_man_{rid}"):
+                    if mk_.startswith("HDP"):
+                        tm_ = fe["home"] if mk_ == "HDP_HOME" else fe["away"]
+                        l0 = fe["line_c"] if mk_ == "HDP_HOME" else -fe["line_c"]
+                        mine0, oth0 = ((fe["fav_water_c"], fe["dog_water_c"]) if mk_ == fe["fav_hdp"] else (fe["dog_water_c"], fe["fav_water_c"]))
+                        l_lab = f"เรตของ {tm_} ตอนปิด"
                     else:
-                        st.error("คำนวณ CLV ไม่ได้ ตรวจตัวเลขอีกครั้ง")
-                elif old_c:
-                    st.caption(f"CLV ที่บันทึกไว้: {old_c['clv'] * 100:+.2f}% (ราคาดีสุด {old_c.get('clv_best', old_c['clv']) * 100:+.2f}%) · {old_c.get('at', '')}")
+                        l0 = fe["ou_c"]
+                        mine0, oth0 = ((fe["over_water_c"], fe["under_water_c"]) if mk_ == "OU_OVER" else (fe["under_water_c"], fe["over_water_c"]))
+                        l_lab = "เส้นสูง/ต่ำตอนปิด"
+                    k1, k2, k3 = st.columns(3)
+                    cl_line = k1.number_input(l_lab, -10.0, 10.0, float(old_c.get("line", l0)), 0.25, format="%.2f", key=f"clv_l_{rid}")
+                    cl_m = k2.number_input("ค่าน้ำฝั่งที่แทง", 0.3, 2.5, float(old_c.get("w_mine", round(mine0, 2))), 0.01, format="%.2f", key=f"clv_m_{rid}")
+                    cl_o = k3.number_input("ค่าน้ำอีกฝั่ง", 0.3, 2.5, float(old_c.get("w_other", round(oth0, 2))), 0.01, format="%.2f", key=f"clv_o_{rid}")
+                    if st.button("บันทึกราคาปิด", key=f"clv_go_{rid}"):
+                        c_ = q.set_clv(store, rid, cl_line, cl_m, cl_o, source="กรอกเอง")
+                        if c_:
+                            st.success(f"บันทึกแล้ว · CLV {c_['clv_best'] * 100:+.2f}% ที่ราคาที่แทง (ราคากลาง {c_['clv'] * 100:+.2f}%)")
+                            cloud_warn()
+                        else:
+                            st.error("คำนวณ CLV ไม่ได้ ตรวจตัวเลขอีกครั้ง")
             else:
                 st.caption("ไม้ตลาด 1X2 ยังไม่รองรับ CLV")
         if st.button("✓ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
