@@ -1396,6 +1396,67 @@ def clv_compute(rec, line, w_mine, w_other):
             "clv": round(ev_med, 4), "clv_best": round(ev_best, 4), "at": now_th("%Y-%m-%d %H:%M")}
 
 
+CLOSING_PROMPT = """รูปนี้คือตารางราคาบอลก่อนเตะ (เช่นจาก AiScore) ของคู่ @HOME@ (เจ้าบ้าน) vs @AWAY@ (ทีมเยือน) ตลาด @MARKET@
+แต่ละเจ้ามือ (bookmaker) มี 2 แถว: แถวบน (แถบสีน้ำเงินด้านซ้าย) = ราคาเปิด, แถวล่าง (แถบสีส้ม) = ราคาปัจจุบัน
+ให้อ่านเฉพาะ "แถวล่าง = ราคาปัจจุบัน" ของทุกเจ้ามือที่เห็นในรูป
+กติกา:
+1. ห้ามเดา อ่านไม่ชัดให้ข้ามเจ้านั้น ถ้ารูปไม่ใช่ตลาด @MARKET@ ของคู่นี้ ให้ตอบ {"ok":false,"reason":"..."}
+2. แปลงเรตเอเชียนเป็นทศนิยม: 0/0.5 -> 0.25, 0.5/1 -> 0.75, 1/1.5 -> 1.25 ; "-0/0.5" = -0.25
+3. แฮนดิแคป: home_line = เรตของเจ้าบ้านตามที่แสดงในคอลัมน์เจ้าบ้าน (ติดลบ = เจ้าบ้านต่อ, บวก = เจ้าบ้านรอง, 0 = เสมอ)
+   home_water/away_water = ค่าน้ำแบบฮ่องกง (เช่น 0.92)
+4. สูง/ต่ำ: line = เส้นประตู (เช่น 2.5, "2.5/3" = 2.75), over_water/under_water = ค่าน้ำฝั่งสูง/ต่ำ
+5. ตอบเป็น JSON ล้วน ไม่มีข้อความอื่น:
+แฮนดิแคป: {"ok":true,"market":"hdp","books":[{"book":"GK8","home_line":-0.5,"home_water":0.99,"away_water":0.93}]}
+สูง/ต่ำ: {"ok":true,"market":"ou","books":[{"book":"GK8","line":2.5,"over_water":0.91,"under_water":1.01}]}"""
+
+
+def read_closing_image(rec, image_bytes, mime, model, api_key):
+    """อ่านราคาปิด (ราคาปัจจุบันตอนใกล้เตะ) จากรูปตารางราคา 1 รูปด้วย Gemini
+    คืน {"line": เรตของฝั่งที่แทง (แฮนดิแคป) หรือเส้น (สูง/ต่ำ), "w_mine", "w_other", "books": n, "detail": [...]}"""
+    import statistics as _st
+    f, mk = rec["features"], rec["pick"]["market"]
+    is_hdp = mk.startswith("HDP")
+    if not (is_hdp or mk.startswith("OU")):
+        raise ValueError("ไม้ตลาด 1X2 ยังไม่รองรับ CLV")
+    prompt = (CLOSING_PROMPT.replace("@HOME@", f["home"]).replace("@AWAY@", f["away"])
+              .replace("@MARKET@", "แฮนดิแคป (Asian Handicap)" if is_hdp else "สูง/ต่ำ (Total Goals)"))
+    parts = [{"inline_data": {"mime_type": mime, "data": base64.b64encode(image_bytes).decode()}}, {"text": prompt}]
+    data = _post_json(GEMINI_URL.format(model=model), {"content-type": "application/json", "x-goog-api-key": api_key},
+                      {"contents": [{"role": "user", "parts": parts}],
+                       "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 2048}})
+    cands = data.get("candidates") or []
+    if not cands:
+        raise ValueError("Gemini ไม่ส่งผลลัพธ์กลับมา")
+    js = parse_json_reply("".join(pt.get("text", "") for pt in cands[0].get("content", {}).get("parts", []) if not pt.get("thought")))
+    if not js.get("ok", True):
+        raise ValueError("รูปไม่ตรง: " + str(js.get("reason") or "ไม่ใช่ตลาดที่แทงไป"))
+    rows = []
+    for b in js.get("books") or []:
+        try:
+            if is_hdp:
+                L, hw, aw = float(b["home_line"]), float(b["home_water"]), float(b["away_water"])
+            else:
+                L, hw, aw = float(b["line"]), float(b["over_water"]), float(b["under_water"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0.3 <= hw <= 2.0 and 0.3 <= aw <= 2.0 and abs(L * 4 - round(L * 4)) < 1e-6:
+            rows.append((L, hw, aw, b.get("book", "")))
+    if not rows:
+        raise ValueError("อ่านราคาจากรูปไม่ได้ ลองแคปให้เห็นตารางชัด ๆ หรือกรอกเอง")
+    line = _st.median_low([r[0] for r in rows])                    # เรตที่เจ้าส่วนใหญ่ใช้
+    same = [r for r in rows if abs(r[0] - line) < 1e-6]
+    hw, aw = _st.median([r[1] for r in same]), _st.median([r[2] for r in same])
+    if is_hdp:
+        mine_home = (mk == "HDP_HOME")
+        out_line = line if mine_home else -line
+        w_mine, w_other = (hw, aw) if mine_home else (aw, hw)
+    else:
+        out_line = line
+        w_mine, w_other = (hw, aw) if mk == "OU_OVER" else (aw, hw)
+    return {"line": out_line, "w_mine": round(w_mine, 3), "w_other": round(w_other, 3), "books": len(same),
+            "detail": [{"book": r[3], "line": r[0], "a": r[1], "b": r[2]} for r in rows]}
+
+
 def set_clv(store, rid, line, w_mine, w_other):
     rec = next((r for r in store.history if r["id"] == rid), None)
     if not rec:
