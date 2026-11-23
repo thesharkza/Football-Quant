@@ -708,9 +708,10 @@ def stats_story(state, history, params):
               f'<div class="d">ผลตอบแทนคาดหมายต่อไม้ ถ้าราคาปิดคือราคายุติธรรม</div></div>'
               f'<div class="s-kpi"><div class="t">CLV เฉลี่ย (ราคาดีสุด)</div><div class="v {"s-up" if cs["mean_best"] >= 0 else "s-down"}">{num(cs["mean_best"] * 100, 2, sign=True, suf="%")}</div>'
               f'<div class="d">ถ้าแทงที่เจ้าที่ให้ราคาดีที่สุด</div></div>'
-              f'<div class="s-kpi"><div class="t">ไม้ที่ CLV เป็นบวก</div><div class="v">{num(cs["pos"] * 100, 0, suf="%")}</div>'
+              f'<div class="s-kpi"><div class="t">ไม้ที่ CLV เป็นบวก (ราคาที่แทง)</div><div class="v">{num(cs["pos"] * 100, 0, suf="%")}</div>'
               f'<div class="d">z = {cs["z"]:+.2f}</div></div></div>'
-              f'<div class="s-note">{e(verdict)} · CLV ใช้เวลาพิสูจน์ฝีมือเร็วกว่าดูผลแพ้ชนะมาก เพราะไม่ขึ้นกับดวงของสกอร์</div></div>')
+              f'<div class="s-note">{e(verdict)} · CLV ใช้เวลาพิสูจน์ฝีมือเร็วกว่าดูผลแพ้ชนะมาก เพราะไม่ขึ้นกับดวงของสกอร์'
+              f'{(" · ไม่นับ " + str(cs["suspect"]) + " ไม้ที่ราคาปิดน่าจะอ่านผิด") if cs.get("suspect") else ""}</div></div>')
     chs.append(("st-all", "ภาพรวม", chapter("st-all", 1, "บทที่ 1 · ภาพรวม", "ผลงานทั้งหมดจนถึงวันนี้", lead, k)))
 
     # 2 เส้นทางกำไร
