@@ -712,6 +712,17 @@ def stats_story(state, history, params):
               f'<div class="d">z = {cs["z"]:+.2f}</div></div></div>'
               f'<div class="s-note">{e(verdict)} · CLV ใช้เวลาพิสูจน์ฝีมือเร็วกว่าดูผลแพ้ชนะมาก เพราะไม่ขึ้นกับดวงของสกอร์'
               f'{(" · ไม่นับ " + str(cs["suspect"]) + " ไม้ที่ราคาปิดน่าจะอ่านผิด") if cs.get("suspect") else ""}</div></div>')
+    nb = q.negband_track(history)
+    if nb["n"]:
+        nb_v = ("การข้ามช่วยได้จริง" if nb["z"] <= -2 else "การข้ามทำให้พลาดไม้ดี · ควรเอาป้ายออก" if nb["z"] >= 2 else
+                ("ยังน้อยเกินสรุป · ควรมี 60–80 ไม้" if nb["n"] < 60 else "ยังแยกจากความบังเอิญไม่ได้"))
+        k += (f'<div class="s-card s-rv" style="margin-top:12px"><div class="s-h"><span>ติดตามป้าย “ช่วงคะแนนติดลบ → แนะนำข้าม”</span>'
+              f'{chip(str(nb["n"]) + " ไม้", "acc")}</div><div class="s-kpis">'
+              f'<div class="s-kpi"><div class="t">ผลของไม้ที่ขึ้นป้าย</div><div class="v">{nb["w"]}-{nb["l"]}</div>'
+              f'<div class="d">ถ้าแทงทุกไม้ {nb["profit"]:+.2f} หน่วย (คนแทงสุ่มคาดได้ {nb["expected"]:+.2f})</div></div>'
+              f'<div class="s-kpi"><div class="t">ข้ามตามป้ายแล้วประหยัดได้</div><div class="v {"s-up" if nb["saved"] >= 0 else "s-down"}">{num(nb["saved"], 2, sign=True)}</div>'
+              f'<div class="d">หน่วย · z = {nb["z"]:+.2f}</div></div></div>'
+              f'<div class="s-note">{e(nb_v)} · นับตั้งแต่เพิ่มป้าย ({q.NEGBAND_START})</div></div>')
     chs.append(("st-all", "ภาพรวม", chapter("st-all", 1, "บทที่ 1 · ภาพรวม", "ผลงานทั้งหมดจนถึงวันนี้", lead, k)))
 
     # 2 เส้นทางกำไร
