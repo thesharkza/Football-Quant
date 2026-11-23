@@ -667,7 +667,9 @@ with tab2:
                 st.caption(f"แคปตาราง{'แฮนดิแคป' if mk_.startswith('HDP') else 'สูง/ต่ำ'}ของคู่นี้ตอนใกล้เตะที่สุด (ราว 5–15 นาทีก่อนเตะ) แล้วส่งรูป "
                            f"ระบบจะอ่านราคาปัจจุบันของ{('เจ้าเดิมที่ให้ราคาดีที่สุดตอนวิเคราะห์ (' + bk_ + ')') if bk_ else 'ทุกเจ้า'} "
                            "แล้วคำนวณและบันทึก CLV ให้ทันที · CLV ไม่เปลี่ยนไม้และไม่เปลี่ยนการเรียนรู้")
-                if old_c:
+                if old_c and q.clv_suspect(rec):
+                    st.warning(f"ราคาปิดที่บันทึกไว้น่าสงสัย: {q.clv_suspect(rec)} · ไม่นับในสรุป CLV · ส่งรูปใหม่หรือแก้ตัวเลขเอง")
+                elif old_c:
                     st.success(f"CLV ที่บันทึกไว้: {old_c.get('clv_best', old_c['clv']) * 100:+.2f}% ที่ราคาที่แทง "
                                f"(ราคากลาง {old_c['clv'] * 100:+.2f}%) · ราคาปิด {old_c['line']:+.2f} @{old_c['w_mine']:.2f}/{old_c['w_other']:.2f}"
                                + (f" · {old_c['source']}" if old_c.get("source") else "") + f" · {old_c.get('at', '')}")
@@ -681,6 +683,9 @@ with tab2:
                             with st.spinner("กำลังอ่านราคาจากรูป ..."):
                                 rd_ = q.read_closing_image(rec, up_.getvalue(), up_.type or "image/png", o_["model"], o_["api_key"])
                             c_ = q.set_clv(store, rid, rd_["line"], rd_["w_mine"], rd_["w_other"], source=rd_["source"])
+                            sus_ = q.clv_suspect(rec, c_) if c_ else None
+                            if sus_:
+                                st.warning(f"ราคาปิดที่อ่านได้น่าสงสัย: {sus_} · ไม่นับในสรุป CLV จนกว่าจะแก้ (ติ๊ก “แก้ตัวเลขเอง” ด้านล่าง)")
                             if c_:
                                 st.success(f"บันทึกแล้ว · CLV {c_['clv_best'] * 100:+.2f}% ที่ราคาที่แทง (ราคากลาง {c_['clv'] * 100:+.2f}%) · "
                                            f"ราคาปิด {rd_['line']:+.2f} @{rd_['w_mine']:.2f}/{rd_['w_other']:.2f} · {rd_['source']}")
