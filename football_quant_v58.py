@@ -1451,8 +1451,14 @@ def read_closing_image(rec, image_bytes, mime, model, api_key):
                 L, hw, aw = float(b["line"]), float(b["over_water"]), float(b["under_water"])
         except (KeyError, TypeError, ValueError):
             continue
-        if 0.3 <= hw <= 2.0 and 0.3 <= aw <= 2.0 and abs(L * 4 - round(L * 4)) < 1e-6:
-            rows.append((L, hw, aw, b.get("book", "")))
+        if not (0.6 <= hw <= 1.35 and 0.6 <= aw <= 1.35) or abs(L * 4 - round(L * 4)) > 1e-6:
+            continue                                               # ค่าน้ำผิดรูป (เช่นราคาสด/อ่านผิด) -> ไม่ใช้
+        ov = 1 / (1 + hw) + 1 / (1 + aw)
+        if not (0.99 <= ov <= 1.12):
+            continue
+        if is_hdp and f["line_c"] * L < 0 and abs(f["line_c"]) >= 0.5:
+            L = -L                                                 # อ่านเครื่องหมายเรตกลับด้าน (ทีมต่อไม่สลับข้างก่อนเตะ) -> แก้เครื่องหมาย
+        rows.append((L, hw, aw, b.get("book", "")))
     if not rows:
         raise ValueError("อ่านราคาจากรูปไม่ได้ ลองแคปให้เห็นตารางชัด ๆ หรือกรอกเอง")
     # 1) ใช้เจ้ามือเดียวกับที่ให้ราคาดีที่สุดตอนวิเคราะห์ (ราคาที่แทงจริง) 2) ไม่พบ -> ค่ากลางของเจ้าส่วนใหญ่
@@ -1494,18 +1500,50 @@ def set_clv(store, rid, line, w_mine, w_other, source=None):
     return c
 
 
+def _taken_line(rec):
+    f, mk = rec["features"], rec["pick"]["market"]
+    if mk.startswith("HDP"):
+        return f["line_c"] if mk == "HDP_HOME" else -f["line_c"]
+    return f.get("ou_c")
+
+
+def clv_suspect(rec, c=None):
+    """ตรวจว่าราคาปิดน่าจะอ่านผิด: เรตสลับเครื่องหมาย, เรตกระโดดเกิน 0.5 ลูก, หรือค่าน้ำผิดรูป (นอก 0.60-1.35 / ค่าต๋งผิดปกติ)
+    คืนเหตุผล (ข้อความ) หรือ None"""
+    c = c or rec.get("clv") or {}
+    if not c:
+        return None
+    tl = _taken_line(rec)
+    L, a, b = c.get("line"), c.get("w_mine"), c.get("w_other")
+    if tl is None or L is None or a is None or b is None:
+        return "ข้อมูลไม่ครบ"
+    if rec["pick"]["market"].startswith("HDP") and tl * L < 0 and abs(tl) >= 0.5:
+        return f"เรตสลับเครื่องหมาย ({tl:+.2f} -> {L:+.2f})"
+    if abs(L - tl) > 0.5:
+        return f"เรตกระโดด {abs(L - tl):.2f} ลูก"
+    if not (0.6 <= a <= 1.35 and 0.6 <= b <= 1.35):
+        return f"ค่าน้ำผิดรูป ({a:.2f}/{b:.2f})"
+    ov = 1 / (1 + a) + 1 / (1 + b)
+    if not (0.99 <= ov <= 1.12):
+        return f"ค่าต๋งผิดปกติ ({ov - 1:+.1%})"
+    return None
+
+
 def clv_summary(history):
     """สรุป CLV ของไม้ที่ลงจริงที่มีราคาปิด: n, ค่าเฉลี่ย, % ที่เป็นบวก, z (ค่าเฉลี่ย / ส่วนเบี่ยงเบนมาตรฐาน x รากที่สองของ n)"""
     import math
-    v = [r["clv"]["clv"] for r in history if r.get("clv") and not r["pick"].get("skip")]
-    vb = [r["clv"].get("clv_best", r["clv"]["clv"]) for r in history if r.get("clv") and not r["pick"].get("skip")]
+    ok = [r for r in history if r.get("clv") and not r["pick"].get("skip") and not clv_suspect(r)]
+    bad = sum(1 for r in history if r.get("clv") and not r["pick"].get("skip") and clv_suspect(r))
+    v = [r["clv"]["clv"] for r in ok]
+    vb = [r["clv"].get("clv_best", r["clv"]["clv"]) for r in ok]
     if not v:
-        return {"n": 0}
+        return {"n": 0, "suspect": bad}
     n = len(v)
-    mu = sum(v) / n
-    sd = math.sqrt(sum((x - mu) ** 2 for x in v) / (n - 1)) if n > 1 else 0.0
-    return {"n": n, "mean": mu, "mean_best": sum(vb) / n, "pos": sum(x > 0 for x in v) / n,
-            "z": (mu / sd * math.sqrt(n)) if sd > 0 else 0.0}
+    mu = sum(vb) / n                                   # z คิดจาก CLV ที่ราคาที่แทงจริง (ราคาดีสุด)
+    sd = math.sqrt(sum((x - mu) ** 2 for x in vb) / (n - 1)) if n > 1 else 0.0
+    vs = sorted(vb)
+    return {"n": n, "mean": sum(v) / n, "mean_best": mu, "median_best": vs[n // 2], "pos": sum(x > 0 for x in vb) / n,
+            "z": (mu / sd * math.sqrt(n)) if sd > 0 else 0.0, "suspect": bad}
 
 
 def market_role(mk, f):
