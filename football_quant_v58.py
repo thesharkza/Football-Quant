@@ -84,7 +84,12 @@ DEFAULT_PARAMS = {
     "unlock_min_n": 40,          # จำนวนครั้งขั้นต่ำของทางลัด (เดิม 30: Rule ที่ไม่มีประโยชน์หลุดผ่านได้ ~9% ต่อข้อ)
     "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
     "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
-    "team_news_enabled": False,  # ค้นข่าวทีม (xG/ตัวเจ็บ/วันพัก) ด้วย Google Search · ปิดไว้: ใช้โควตา Gemini มาก และยังไม่มีผลต่อการฟันธง
+    "team_news_enabled": False,
+    "risk_bankroll": 0.0,        # ทุน (บาท) · 0 = ไม่ตั้ง
+    "risk_unit": 0.0,            # 1 หน่วย = กี่บาท · 0 = ไม่ตั้ง
+    "risk_day_limit": 5.0,       # เพดานขาดทุนต่อวัน (หน่วย)
+    "risk_dd_limit": 40.0,       # เพดานช่วงดิ่งรวม (หน่วย) -> แนะนำพักเงินจริง
+    "risk_paper_default": False, # บันทึกผลเป็น "ไม้กระดาษ" เป็นค่าเริ่มต้น  # ค้นข่าวทีม (xG/ตัวเจ็บ/วันพัก) ด้วย Google Search · ปิดไว้: ใช้โควตา Gemini มาก และยังไม่มีผลต่อการฟันธง
     "gate_enabled": True,        # ตัวกรองช่วงคะแนน: งดลงทุนเมื่อประเภทไม้ × ช่วงคะแนนนั้นมีผลที่ผ่านมาต่ำกว่าจุดคุ้มทุนหรือขาดทุน
     "gate_min_n": 20,            # ต้องมีผลในช่วงนั้นอย่างน้อยกี่ไม้ จึงเริ่มตัดสิน (น้อยกว่านี้ = ลงทุนตามปกติ)
     "gate_edges": [1.0, 1.5, 2.0, 2.5, 3.0],
@@ -1527,6 +1532,93 @@ def clv_suspect(rec, c=None):
     if not (0.99 <= ov <= 1.12):
         return f"ค่าต๋งผิดปกติ ({ov - 1:+.1%})"
     return None
+
+
+NEGBAND_START = "2026-11-21 23:17"     # วันที่เพิ่มป้าย "ช่วงคะแนนติดลบ -> แนะนำข้าม"
+
+
+def negband(rec):
+    """ไม้นี้ขึ้นป้าย 'ช่วงคะแนนติดลบ -> แนะนำข้าม' หรือไม่ (ช่วงคะแนน >= 20 ไม้ และกำไรสะสม <= -2.0 และระบบไม่ได้สั่งข้ามเอง)"""
+    g = rec["pick"].get("gate") or {}
+    return g.get("n", 0) >= 20 and g.get("profit", 0.0) <= -2.0 and not rec["pick"].get("skip")
+
+
+def negband_track(history):
+    """ติดตามผลของป้ายนับจากวันที่เพิ่มป้าย: ถ้าข้ามตามป้าย ประหยัดได้เท่าไร (= -กำไรของไม้เหล่านั้น) เทียบกับคนแทงสุ่ม"""
+    import math
+    rs = [r for r in history if r["status"] == "settled" and r["created"] >= NEGBAND_START and negband(r)]
+    if not rs:
+        return {"n": 0}
+    pf = sum(r["pick_profit"] for r in rs)
+    ex = var = 0.0
+    for r in rs:
+        m, o = _side_waters(r)
+        p = _devig_p(m, o)
+        w = r["pick"]["price_win"]
+        e = p * w - (1 - p)
+        ex += e
+        var += p * w * w + (1 - p) - e * e
+    return {"n": len(rs), "w": sum(r["pick_profit"] > 1e-9 for r in rs), "l": sum(r["pick_profit"] < -1e-9 for r in rs),
+            "profit": pf, "saved": -pf, "expected": ex, "z": (pf - ex) / math.sqrt(var) if var > 0 else 0.0}
+
+
+def _side_waters(rec):
+    f, mk = rec["features"], rec["pick"]["market"]
+    if mk.startswith("OU"):
+        return (f["over_water_c"], f["under_water_c"]) if mk == "OU_OVER" else (f["under_water_c"], f["over_water_c"])
+    if mk.startswith("HDP"):
+        return (f["fav_water_c"], f["dog_water_c"]) if mk == f["fav_hdp"] else (f["dog_water_c"], f["fav_water_c"])
+    w = rec["pick"]["price_win"]
+    return w, w
+
+
+def rule_luck(e, n_tested, be=0.5263):
+    """โอกาสที่ผลของ Rule นี้เป็นแค่โชค: p ด้านเดียวเทียบจุดคุ้มทุน และ p ที่ปรับตามจำนวน Rule ที่ทดสอบพร้อมกัน (1-(1-p)^K)"""
+    import math
+    dec = e["w"] + e["l"]
+    if not dec:
+        return 1.0, 1.0
+    z = (e["w"] / dec - be) / math.sqrt(be * (1 - be) / dec)
+    p = 0.5 * math.erfc(z / math.sqrt(2))
+    return p, 1 - (1 - p) ** max(1, n_tested)
+
+
+def rule_clv(history, rid):
+    """CLV (ราคาที่แทง) ของไม้ที่ Rule นี้แนะนำตลาดเดียวกับที่ระบบเลือก และมีราคาปิด"""
+    v = []
+    for r in history:
+        c = r.get("clv")
+        if not c or clv_suspect(r):
+            continue
+        if any(x.get("rule") == rid and x.get("market") == r["pick"]["market"] and x.get("eff", 0) > 0 for x in r.get("contribs") or []) \
+                or any(x.get("id") == rid and x.get("market") == r["pick"]["market"] for x in r["pick"].get("shadow") or []):
+            v.append(c.get("clv_best", c["clv"]))
+    return (sum(v) / len(v), len(v)) if v else (None, 0)
+
+
+def risk_status(history, P, today=None):
+    """สถานะความเสี่ยงของไม้ที่ลงเงินจริง (ไม่นับไม้กระดาษและไม้ที่ระบบข้าม): กำไรรวม, จุดสูงสุด, ช่วงดิ่ง, กำไรวันนี้, เพดาน"""
+    today = today or now_th("%Y-%m-%d")
+    rs = sorted([r for r in history if r["status"] == "settled" and not r["pick"].get("skip") and not r.get("paper")],
+                key=lambda r: r.get("settle_seq") or 0)
+    cum = peak = 0.0
+    for r in rs:
+        cum += r["pick_profit"]
+        peak = max(peak, cum)
+    day = [r for r in rs if (r.get("settled_at") or r["created"])[:10] == today]
+    dpf = sum(r["pick_profit"] for r in day)
+    unit, bank = float(P.get("risk_unit") or 0), float(P.get("risk_bankroll") or 0)
+    dd = cum - peak
+    out = {"n": len(rs), "cum": cum, "peak": peak, "dd": dd, "day_n": len(day), "day": dpf,
+           "day_hit": dpf <= -abs(float(P.get("risk_day_limit") or 0)) if P.get("risk_day_limit") else False,
+           "dd_hit": dd <= -abs(float(P.get("risk_dd_limit") or 0)) if P.get("risk_dd_limit") else False,
+           "unit": unit, "bank": bank,
+           "paper_n": sum(1 for r in history if r["status"] == "settled" and r.get("paper"))}
+    if unit > 0 and bank > 0:
+        out["dd_pct"] = dd * unit / bank
+        out["cum_money"] = cum * unit
+        out["day_money"] = dpf * unit
+    return out
 
 
 def clv_summary(history):
