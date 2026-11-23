@@ -504,7 +504,21 @@ else:
     tab1 = st.container()                         # User / Local เห็นเฉพาะหน้าวิเคราะห์
 
 # ================================================================ TAB 1
+def risk_banner(store_):
+    """แถบเตือนเมื่อถึงเพดานที่ตั้งไว้ (ไม้ที่ลงเงินจริงเท่านั้น)"""
+    rk = q.risk_status(store_.history, store_.params)
+    P_ = store_.params
+    if rk["day_hit"]:
+        st.error(f"ถึงเพดานขาดทุนวันนี้แล้ว ({rk['day']:+.2f} หน่วย · เพดาน −{float(P_['risk_day_limit']):.1f}) · แนะนำหยุดแทงเงินจริงวันนี้ "
+                 "(ยังวิเคราะห์และบันทึกเป็นไม้กระดาษได้)")
+    if rk["dd_hit"]:
+        st.error(f"ช่วงดิ่งถึงเพดานรวมแล้ว ({rk['dd']:+.2f} หน่วย · เพดาน −{float(P_['risk_dd_limit']):.1f}) · แนะนำพักเงินจริง "
+                 "แล้วเก็บข้อมูลเป็นไม้กระดาษจนกว่าจะกลับมาทบทวน")
+    return rk
+
+
 with tab1:
+    risk_banner(q.Store(DATA_DIR))
     ss.setdefault("up_ver", 0)            # เปลี่ยนเลขเวอร์ชันของ key = ล้างรูปที่อัปโหลดทิ้งทันที
     files = st.file_uploader("อัปโหลดรูป 5 รูป: ภาพสรุปแมตช์ · 1X2 · Handicap · Over/Under · H2H",
                              type=["png", "jpg", "jpeg", "webp", "gif"], accept_multiple_files=True,
@@ -718,7 +732,10 @@ with tab2:
                             st.error("คำนวณ CLV ไม่ได้ ตรวจตัวเลขอีกครั้ง")
             else:
                 st.caption("ไม้ตลาด 1X2 ยังไม่รองรับ CLV")
+        paper_ = st.checkbox("ไม้กระดาษ (ไม่ได้ลงเงินจริง) · ระบบยังเรียนรู้ตามปกติ แต่ไม่นับในสถิติเงินจริงและเพดานความเสี่ยง",
+                             value=bool(rec.get("paper", store.params.get("risk_paper_default", False))), key=f"paper_{rid}")
         if st.button("✓ บันทึกผลจริง & ให้ระบบเรียนรู้", type="primary"):
+            rec["paper"] = bool(paper_)
             outcomes, r, pf, changes, new = q.do_settle(store, rec, int(hg), int(ag))
             ss["settle_html"] = SP.settle_result(fe, rec["pick"], int(hg), int(ag), outcomes, r, pf, changes, new, rec.get("life_changes") or [])
             ss.pop("settle_sel", None)
@@ -798,7 +815,32 @@ def stats_live():
 with tab3:
     store = q.Store(DATA_DIR)
     S = store.state
+    rk_ = risk_banner(store)
     stats_live()
+    with st.expander("คุมความเสี่ยง: ทุน · หน่วย · เพดานขาดทุน · ไม้กระดาษ"):
+        P0 = store.params
+        r1, r2 = st.columns(2)
+        n_bank = r1.number_input("ทุนทั้งหมด (บาท) · 0 = ไม่ระบุ", 0.0, 1e9, float(P0.get("risk_bankroll", 0.0)), 100.0, key="rk_bank")
+        n_unit = r2.number_input("1 หน่วย = กี่บาท · 0 = ไม่ระบุ", 0.0, 1e8, float(P0.get("risk_unit", 0.0)), 10.0, key="rk_unit")
+        r3, r4 = st.columns(2)
+        n_day = r3.number_input("เพดานขาดทุนต่อวัน (หน่วย) · 0 = ปิด", 0.0, 100.0, float(P0.get("risk_day_limit", 5.0)), 0.5, key="rk_day")
+        n_dd = r4.number_input("เพดานช่วงดิ่งรวม (หน่วย) · 0 = ปิด", 0.0, 500.0, float(P0.get("risk_dd_limit", 40.0)), 1.0, key="rk_dd")
+        n_pp = st.toggle("ติ๊ก “ไม้กระดาษ” ไว้เป็นค่าเริ่มต้นตอนบันทึกผล (สำหรับช่วงพักเงินจริง)", value=bool(P0.get("risk_paper_default", False)), key="rk_pp")
+        if n_unit and n_bank:
+            st.caption(f"1 หน่วย = {n_unit / n_bank:.2%} ของทุน · ช่วงดิ่ง 60 หน่วย (กรณีแย่ที่จำลองไว้) = {60 * n_unit / n_bank:.0%} ของทุน"
+                       + (" · แนะนำไม่เกิน 1% ต่อหน่วย" if n_unit / n_bank > 0.01 else ""))
+        if st.button("บันทึกการตั้งค่าความเสี่ยง", key="rk_save"):
+            store.state["params"].update({"risk_bankroll": float(n_bank), "risk_unit": float(n_unit), "risk_day_limit": float(n_day),
+                                          "risk_dd_limit": float(n_dd), "risk_paper_default": bool(n_pp)})
+            store.save()
+            st.success("บันทึกแล้ว")
+            cloud_warn()
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("กำไรเงินจริง (หน่วย)", f"{rk_['cum']:+.2f}", f"{rk_['cum_money']:+,.0f} บาท" if "cum_money" in rk_ else None)
+        m2.metric("ช่วงดิ่งตอนนี้ (หน่วย)", f"{rk_['dd']:+.2f}", f"{rk_['dd_pct']:+.1%} ของทุน" if "dd_pct" in rk_ else None)
+        m3.metric("วันนี้ (หน่วย)", f"{rk_['day']:+.2f}", f"{rk_['day_n']} ไม้")
+        m4.metric("ไม้กระดาษ", f"{rk_['paper_n']}")
+        st.caption("นับเฉพาะไม้ที่ลงเงินจริง (ไม่นับไม้ที่ระบบข้ามและไม้กระดาษ) · เพดานไม่เปลี่ยนไม้ที่ระบบเลือก แค่เตือนให้หยุด")
     with st.expander("ตั้งค่าระบบ: สถานะ “ข้าม” และการแช่แข็งน้ำหนัก Rule"):
         P0 = store.params
         a1, a2 = st.columns(2)
@@ -836,6 +878,18 @@ with tab3:
             st.caption("ยังไม่มี Rule เงาที่ผ่านเกณฑ์ · เมื่อมี จะขึ้นที่นี่ให้อนุมัติทีละข้อ (Rule ที่อนุมัติแล้วจะมีผลต่อการฟันธงนัดถัดไป)")
         else:
             lc_ = store.state["lifecycle"]
+            k_tested = sum(1 for k, v in lc_.items() if k in q.EXPERIMENTAL and v.get("status") in ("shadow", "retired", "active"))
+            rows_ = []
+            for k in ready_:
+                p1, pk_ = q.rule_luck(lc_[k], k_tested, float(store.params.get("breakeven_wr", 0.5263)))
+                cv, cn = q.rule_clv(store.history, k)
+                verdict_ = ("น่าเชื่อ" if pk_ < 0.05 and (cv is None or cv > 0) else
+                            "ระวัง: อาจเป็นโชค" if pk_ >= 0.05 else "ระวัง: CLV ติดลบ")
+                rows_.append([k, q.RULE_NAMES.get(k, ""), f"{lc_[k]['w']}-{lc_[k]['l']}", f"{p1:.1%}", f"{pk_:.0%}",
+                              (f"{cv * 100:+.1f}% ({cn} ไม้)" if cv is not None else "ยังไม่มี"), verdict_])
+            st.markdown(html_table(["Rule", "ชื่อ", "ผล", "โอกาสเป็นโชค (ข้อเดียว)", f"เมื่อนับว่าทดสอบ {k_tested} ข้อ", "CLV", "สรุป"], rows_),
+                        unsafe_allow_html=True)
+            st.caption("อนุมัติเฉพาะข้อที่ “โอกาสเป็นโชคเมื่อนับจำนวนที่ทดสอบ” ต่ำกว่า 5% และ CLV ไม่ติดลบ · ยิ่งทดสอบหลายข้อพร้อมกัน ยิ่งมีข้อที่ผ่านเพราะโชคได้")
             sel_ = st.multiselect("เลือก Rule ที่จะอนุมัติ", ready_, key="cfg_appr",
                                   format_func=lambda k: f"{k} {q.RULE_NAMES.get(k, '')} · ชนะ {lc_[k]['w']}-{lc_[k]['l']}")
             ok_ap = st.checkbox("ยืนยัน: Rule ที่เลือกจะเริ่มมีผลต่อการฟันธง", key="cfg_appr_ok")
