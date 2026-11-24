@@ -331,7 +331,9 @@ elif _pw:
 # ---------------------------------------------------------------- ตัวประมวลผลหลัก
 def get_opts():
     ctx = {k: bool(ss.get("opt_" + k)) for k, _ in CTX_LABELS}
-    return {"model": (ss.get("opt_model") or q.DEFAULT_MODEL).strip(),
+    return {"model": (ss.get("opt_model") or q.MODEL_IMAGES).strip(),
+            "model_ctx": (ss.get("opt_model_ctx") or q.MODEL_CONTEXT).strip(),
+            "model_clv": (ss.get("opt_model_clv") or q.MODEL_CLV).strip(),
             "api_key": q.get_api_key(secret) or (ss.get("opt_key") or "").strip() or None,
             "ctx": ctx, "league_size": int(ss.get("opt_league_size") or 0),
             "desp": ss.get("opt_desp") or "ไม่มี",
@@ -377,7 +379,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
     if do_research:
         step("กำลังค้นหาข้อมูลบริบทแมตช์ (Google Search) ...")
         try:
-            r, srcs, qs = q.research_context(m.get("home"), m.get("away"), m.get("league"), opts["model"], opts["api_key"])
+            r, srcs, qs = q.research_context(m.get("home"), m.get("away"), m.get("league"), opts["model_ctx"], opts["api_key"])
             q.apply_research(m, r, srcs, qs)
         except SystemExit as e:
             research_err = str(e.code)
@@ -386,7 +388,7 @@ def pipeline_job(job, blobs, opts, do_research, save):
     if do_research and opts.get("team_news"):
         step("กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก ...")
         try:
-            r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"), opts["model"], opts["api_key"])
+            r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"), opts["model_ctx"], opts["api_key"])
             q.apply_team_news(m, r2, srcs2, qs2)
         except SystemExit as e:
             m["team_news"] = {"error": str(e.code)}
@@ -617,7 +619,10 @@ with tab1:
         st.stop()                                     # User / Local: จบที่หน้าวิเคราะห์
 
     with st.expander("ตั้งค่าขั้นสูง"):
-        st.text_input("โมเดล Gemini", value=q.DEFAULT_MODEL, key="opt_model")
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.text_input("โมเดลอ่านรูป", value=q.MODEL_IMAGES, key="opt_model")
+        mc2.text_input("โมเดลค้นบริบท", value=q.MODEL_CONTEXT, key="opt_model_ctx")
+        mc3.text_input("โมเดลอ่านราคาปิด (CLV)", value=q.MODEL_CLV, key="opt_model_clv")
         if not q.get_api_key(secret):
             st.text_input("GEMINI_API_KEY", type="password", key="opt_key", help="ใช้อ่านรูปเท่านั้น ไม่ถูกบันทึก")
         else:
@@ -695,7 +700,7 @@ with tab2:
                     else:
                         try:
                             with st.spinner("กำลังอ่านราคาจากรูป ..."):
-                                rd_ = q.read_closing_image(rec, up_.getvalue(), up_.type or "image/png", o_["model"], o_["api_key"])
+                                rd_ = q.read_closing_image(rec, up_.getvalue(), up_.type or "image/png", o_["model_clv"], o_["api_key"])
                             c_ = q.set_clv(store, rid, rd_["line"], rd_["w_mine"], rd_["w_other"], source=rd_["source"])
                             sus_ = q.clv_suspect(rec, c_) if c_ else None
                             if sus_:
