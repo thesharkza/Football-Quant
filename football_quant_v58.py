@@ -11,7 +11,7 @@ Football Quant V5.9 (Advanced Volatility, Trap Shield & Class Superiority Editio
   3) learn   : รันการค้นหา Rule ใหม่จากประวัติทั้งหมดอีกครั้ง
   4) stats   : ดูผลงาน, ROI, น้ำหนักของแต่ละ Rule, Rule ที่ระบบสร้างเอง
   5) template: พิมพ์ไฟล์ JSON ตัวอย่างสำหรับกรอกข้อมูลแมตช์
-  6) images  : นำเข้ารูปภาพ 5 รูป -> Gemini (gemini-3.1-flash-lite) สกัดค่าราคา/H2H/สถิติ -> ตรวจสอบ -> วิเคราะห์
+  6) images  : นำเข้ารูปภาพ 5 รูป -> Gemini (gemini-3.5-flash-lite) สกัดค่าราคา/H2H/สถิติ -> ตรวจสอบ -> วิเคราะห์
                (ต้องตั้ง GEMINI_API_KEY)
 
 ใช้ไลบรารีมาตรฐานของ Python เท่านั้น (ไม่ต้องติดตั้งอะไรเพิ่ม)
@@ -2972,7 +2972,10 @@ def cmd_analyze(a):
 # 9.1) นำเข้ารูปภาพ (5 รูป) -> สกัดข้อมูลด้วย Gemini -> ตรวจสอบ -> วิเคราะห์
 # ----------------------------------------------------------------------------
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
+MODEL_IMAGES = "gemini-3.5-flash-lite"    # อ่านรูป 5 รูป (ราคา/H2H/ฟอร์ม)
+MODEL_CONTEXT = "gemini-3.8-flash"        # ค้นบริบทแมตช์ + ข่าวทีม (ค้นเว็บ)
+MODEL_CLV = "gemini-3.1-flash-lite"       # อ่านราคาปิดจากรูป (CLV)
+DEFAULT_MODEL = MODEL_IMAGES              # ค่าเริ่มต้นของคำสั่งบรรทัดคำสั่ง (CLI)
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".webp": "image/webp", ".gif": "image/gif"}
 
