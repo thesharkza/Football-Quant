@@ -2379,6 +2379,15 @@ def render_report(m, f, contribs, pick, store):
         L.append("  อันดับ: " + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:5]))
         L.append(f"  ถ้า{f['home']}ชนะ: {br['home'][0]}-{br['home'][1]} · ถ้าเสมอ: {br['draw'][0]}-{br['draw'][1]} · ถ้า{f['away']}ชนะ: {br['away'][0]}-{br['away'][1]}")
         L.append(f"  สกอร์อันดับ 1 มีโอกาสถูกเพียง ~{sm['top'][0][2]:.0%} — ใช้ดูภาพรวมของเกม ไม่ใช่สกอร์ที่จะออกจริง")
+        cp = cover_probs(f, sm)
+        if cp:
+            hh, aa = cp["hdp"]["home"], cp["hdp"]["away"]
+            _hf = lambda d: f" (ได้ครึ่ง {d['half_win']:.0%})" if d["half_win"] >= .005 else ""
+            L.append(f"  โอกาสได้แฮนดิแคป (รวมทุกสกอร์): {f['home']} {hh['get']:.0%}{_hf(hh)} · {f['away']} {aa['get']:.0%}{_hf(aa)}"
+                     + (f" · คืนทุน {hh['push']:.0%}" if hh["push"] >= .005 else ""))
+            if cp.get("ou"):
+                L.append(f"  โอกาสสูง/ต่ำ {cp['ou']['line']:g}: สูง {cp['ou']['over']['get']:.0%} · ต่ำ {cp['ou']['under']['get']:.0%}"
+                         + (f" · คืนทุน {cp['ou']['over']['push']:.0%}" if cp["ou"]["over"]["push"] >= .005 else ""))
     g = pick.get("gate")
     if g:
         st_th = {"pass": "ผ่าน · ลงทุนได้", "fail": "ไม่ผ่าน · งดลงทุน" if g["enabled"] else "ไม่ผ่าน (ตัวกรองปิดอยู่)", "data": "ข้อมูลยังไม่พอ · ลงทุนตามปกติ"}[g["status"]]
@@ -2553,6 +2562,36 @@ def flow_equiv(f):
         return tuple(out)
     except Exception:  # noqa
         return None
+
+
+def cover_probs(f, sm=None):
+    """โอกาสที่แต่ละฝั่งได้แฮนดิแคป (และสูง/ต่ำ) คิดจากทุกสกอร์ในแบบจำลองสกอร์ (จากราคาตลาด)
+    คืน {"hdp": {"home": {"win","half_win","push","half_lose","lose","get"}, "away": {...}, "line": เรตมุมเจ้าบ้าน},
+          "ou": {"over": {...}, "under": {...}, "line"}} · get = ได้เต็ม + ได้ครึ่ง (ไม่นับคืนทุน)"""
+    sm = sm or f.get("score_model")
+    if not sm:
+        return None
+    M = _score_grid(sm["lh"], sm["la"])
+    G = M.shape[0]
+
+    def tally(fn):
+        out = {"win": 0.0, "half_win": 0.0, "push": 0.0, "half_lose": 0.0, "lose": 0.0}
+        for h in range(G):
+            for a in range(G):
+                hv = fn(h, a)
+                v = sum(hv) / len(hv)                      # 1 ได้เต็ม · .5 ได้ครึ่ง · 0 คืนทุน · -.5 เสียครึ่ง · -1 เสียเต็ม
+                k = "win" if v > .75 else "half_win" if v > .25 else "push" if v > -.25 else "half_lose" if v > -.75 else "lose"
+                out[k] += float(M[h, a])
+        out["get"] = out["win"] + out["half_win"]
+        return out
+    L = f["line_c"]
+    res = {"hdp": {"line": L, "home": tally(lambda h, a: halves_hdp("home", L, h, a)),
+                   "away": tally(lambda h, a: halves_hdp("away", L, h, a))}}
+    if f.get("has_ou"):
+        T = f["ou_c"]
+        res["ou"] = {"line": T, "over": tally(lambda h, a: halves_ou("over", T, h, a)),
+                     "under": tally(lambda h, a: halves_ou("under", T, h, a))}
+    return res
 
 
 def score_model(f):
