@@ -83,6 +83,8 @@ DEFAULT_PARAMS = {
     "unlock_wr": 0.65,           # อัตราชนะนอกกลุ่มตัวอย่าง (out-of-sample) ขั้นต่ำเพื่อปลดล็อคทางลัด
     "unlock_min_n": 40,          # จำนวนครั้งขั้นต่ำของทางลัด (เดิม 30: Rule ที่ไม่มีประโยชน์หลุดผ่านได้ ~9% ต่อข้อ)
     "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
+    "judge_max_n": 150,          # Rule ที่ผลยังเป็นบวกแต่ไม่ชัดตอนครบ judge_n -> ติดตามต่อจนครบเท่านี้ก่อนถอด
+    "revive_rules": ["R49", "R61"],   # Rule ที่ถูกถอดตอนครบ 70 ทั้งที่ผลเป็นบวก -> เปิดติดตามต่อ (25 พ.ย. 2026)
     "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
     "team_news_enabled": False,
     "risk_bankroll": 0.0,        # ทุน (บาท) · 0 = ไม่ตั้ง
@@ -176,6 +178,7 @@ RULE_NAMES = {
     "R61": "High Total Under (เส้นสูงมาก -> ต่ำ)",
     "R62": "Value vs Consensus (ราคาดีสุดคุ้มกว่าราคากลาง)",
     "R63": "Score-band Follow/Fade (ช่วงคะแนนผ่านตาม ไม่ผ่านสวน)",
+    "R64": "Score-band Follow (ช่วงคะแนนบวก -> ตาม)",
 }
 STAT_RULES = {"R3", "R5", "R8"}          # กฎที่อิงสถิติ -> ถูกลดน้ำหนักในดาร์บี้ (Rule 10)
 MOVEMENT_RULES = {"R1", "R2", "R9", "R11", "X1"}   # กฎที่อิงการไหลของราคา (เทียบราคาเปิด) -> ต้องมีราคาปัจจุบัน/บริบทหนุนด้วย
@@ -413,6 +416,7 @@ def build_features(m, P):
         return wr, gf, ga
     f["home_wr5"], f["home_gf5"], f["home_ga5"] = _f5("home")
     f["away_wr5"], f["away_gf5"], f["away_ga5"] = _f5("away")
+    f["r64_from"] = now_th("%Y-%m-%d")              # วันที่วิเคราะห์ (R64 นับเฉพาะนัดที่วิเคราะห์ตั้งแต่ 25 พ.ย. 2026)
     f["feat_v"] = 4                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 รุ่น 3, R51-R62 รุ่น 4 (นัดที่วิเคราะห์หลังเพิ่ม Rule = นอกกลุ่มตัวอย่าง)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     try:
@@ -1252,6 +1256,14 @@ def exp63(f, P, c):
     return _exp([(r["market"], 1.0)], [], r["note"])
 
 
+def exp64(f, P, c):
+    """R64: R63 เฉพาะฝั่งตาม · ช่วงคะแนนที่มี >= 20 ไม้และกำไรสะสม >= +2.0 -> ตามไม้ที่ระบบเลือก (เพิ่ม 25 พ.ย. 2026, นับเฉพาะนัดใหม่)"""
+    r = f.get("r63")
+    if not _v4(f) or not r or r.get("status") != "follow" or f.get("r64_from", "") < "2026-11-25":
+        return None
+    return _exp([(r["market"], 1.0)], [], r["note"].replace("R63:", "R64:"))
+
+
 # Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
 EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
                 "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40,
@@ -1259,7 +1271,7 @@ EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": e
                 "R47": exp47, "R48": exp48, "R49": exp49, "R50": exp50,
                 "R51": exp51, "R52": exp52, "R53": exp53, "R54": exp54, "R55": exp55, "R56": exp56,
                 "R57": exp57, "R58": exp58, "R59": exp59, "R60": exp60, "R61": exp61, "R62": exp62,
-                "R63": exp63}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
+                "R63": exp63, "R64": exp64}   # R42-R46: ข้อมูลทีม (xG/ตัวเจ็บ/วันพัก/หมุนเวียน)
 
 
 for _rid in ("R28", "R31"):                       # Rule ทดลองที่มี 2 ตลาด
@@ -1295,13 +1307,20 @@ def lifecycle_update(store, f, outcomes):
     base = _build_contribs(_base_raw(f, P), f, P, S)
     changes = []
     be = P["breakeven_wr"]
+    for rid in (P.get("revive_rules") or []):          # เปิดติดตามต่อทันที แม้นัดนี้ Rule นั้นไม่ทำงาน
+        e0 = life.get(rid)
+        if e0 and e0.get("status") == "retired" and not e0.get("revived"):
+            e0.update(status="shadow", revived=True, reason=f"เปิดติดตามต่อ (ผลเป็นบวก {e0['w']}-{e0['l']}) · รอครบ {P['judge_max_n']} ครั้ง")
     for rid, c in candidates_for(f, P, store, base).items():
         if c["market"] not in outcomes:
             continue
         e = life.setdefault(rid, {"kind": c["kind"], "status": "shadow", "n": 0, "w": 0, "l": 0, "res": [],
                                   "since": seq, "reason": "เริ่มติดตามผลเบื้องหลัง"})
         if e["status"] == "retired":
-            continue
+            if rid in (P.get("revive_rules") or []) and not e.get("revived"):
+                e.update(status="shadow", revived=True, reason=f"เปิดติดตามต่อ (ผลเป็นบวก {e['w']}-{e['l']}) · รอครบ {P['judge_max_n']} ครั้ง")
+            else:
+                continue
         r = outcomes[c["market"]][0]
         e["n"] += 1
         e["w"] += r > 0
@@ -1321,6 +1340,11 @@ def lifecycle_update(store, f, outcomes):
             elif e["n"] >= P["judge_n"]:
                 if _wilson_lo(e["w"], dec, P["lb_z_judge"]) > be:
                     new, why = "active", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} สูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ"
+                elif wr > be and e["n"] < P.get("judge_max_n", P["judge_n"]):
+                    if not e.get("extended"):              # ผลเป็นบวกแต่ยังไม่ชัด -> ติดตามต่อ
+                        e["extended"] = True
+                        e["reason"] = (f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} เป็นบวกแต่ยังไม่ชัด -> ติดตามต่อจนครบ "
+                                       f"{P.get('judge_max_n')} ครั้ง")
                 else:
                     new, why = "retired", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} ไม่ดีกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ไม่มีประโยชน์"
         if new == "active" and old == "shadow" and P.get("lock_unlocks") and rid in (P.get("approved_rules") or []):
