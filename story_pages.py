@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """ตัวสร้างหน้าเรื่องเล่า (visual story) ของแต่ละหน้าในแอป — ใช้ชิ้นส่วนจาก story.py"""
+import re
 import football_quant_v58 as q
 import story as S
 from story import e, chip, chips, card, chapter, rv, bar, num, tipattr
@@ -57,7 +58,7 @@ def analysis_story(res, nav=True):
            ("ch-team", "ข้อมูลทีม", _ch_team(m, f)), ("ch-check", "ตรวจสอบ", _ch_check(res)),
            ("ch-sum", "สรุป", _ch_summary(f, contribs, pick))]
     chs = [(cid, sh, h.replace("@N@", str(i))) for i, (cid, sh, h) in enumerate(chs, 1)]
-    return S.story(chs, hero=_hero(m, f, pick), nav=nav)
+    return S.story(chs, hero=_hero(m, f, pick, res), nav=nav)
 
 
 def analysis_document(res):
@@ -67,7 +68,82 @@ def analysis_document(res):
 
 
 # ---------------------------------------------------------------------------- ฉากเปิด
-def _hero(m, f, pick):
+def warn_level(w):
+    """จัดระดับคำเตือนจากการอ่านข้อมูล: red = ราคา/ข้อมูลผิดปกติ, yel = ต้องระวัง, "" = ข้อมูลทั่วไป"""
+    w = str(w)
+    if w.startswith("ร้ายแรง") or any(k in w for k in ("ผิดปกติ", "ค่าคอมมิชชันสูง", "เปลี่ยนฝั่ง", "กลับด้าน", "สลับเหย้า")):
+        return "red"
+    if any(k in w for k in ("ไม่ทำงาน", "ไม่พบ", "ตรวจรูป")):
+        return "yel"
+    return ""
+
+
+def _risk_items(f, contribs, pick):
+    """สิ่งที่ต้องระวัง (ใช้ทั้งการ์ดรวมและบทสรุป)"""
+    bm = base_of(pick["market"])
+    om = PAIR.get(bm)
+    opp = sorted([c for c in contribs if om and c["market"] == om], key=lambda c: -c["eff"])[:2]
+    risk = [f'Rule ค้าน: {q.RULE_NAMES.get(c["rule"], c["rule"])} ({c["eff"]:+.2f}) — {c.get("note", "")}' for c in opp]
+    if pick.get("move_only"):
+        risk.append("สัญญาณมาจากการไหลของราคาล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน (ระบบลดคะแนนเหลือ 60%)")
+    risk += [x for x in (pick.get("skip_reasons") or []) if "ผิดปกติร้ายแรง" not in x]
+    if pick.get("tier") == "ต่ำ" and not pick.get("skip"):
+        risk.append("สัญญาณอ่อน ควรลดสัดส่วนเงินเดิมพัน")
+    return risk
+
+
+def _warn_book(w):
+    w = re.sub(r"^ร้ายแรง:\s*", "", str(w))
+    return re.split(r"\s+(?:แฮนดิแคป|1X2|สูง/ต่ำ)\s|:", w, maxsplit=1)[0].strip()
+
+
+def _same_book(a, b):
+    n = lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower()).replace("1xet", "1xbet")
+    if not a or not b:
+        return False
+    if n(a) == n(b):
+        return True
+    try:
+        return q._book_key(a) == q._book_key(b)
+    except Exception:
+        return False
+
+
+def alerts(res):
+    """คืน (ผิดปกติ[แดง], ต้องระวัง[เหลือง]) สำหรับการ์ดรวม"""
+    m, f, pick = res["m"], res["f"], res["pick"]
+    warns = [str(w) for w in (res.get("warns") or [])]
+    red, yel = [], []
+    b = pick.get("best")
+    rw = [w for w in warns if warn_level(w) == "red"]
+    if b and any(_same_book(b["book"], _warn_book(w)) for w in rw):
+        red.append(f'เจ้าที่ให้ราคาดีที่สุด ({b["book"]}) มีค่าผิดปกติจากการอ่านรูป — เทียบราคากับหน้าเว็บอีกครั้งก่อนแทง')
+    if pick.get("verify_fail"):
+        red.append("ตรวจเหย้า/เยือนไม่ผ่าน — อาจสลับทีม ควรตรวจรูปอีกครั้ง")
+    red += sorted(rw, key=lambda w: not w.startswith("ร้ายแรง"))
+    yel += _risk_items(f, res.get("contribs") or [], pick)
+    rs = m.get("research") or {}
+    if rs.get("confidence") == "low":
+        yel.append("บริบทที่ค้นได้มีความน่าเชื่อถือต่ำ")
+    if res.get("research_err"):
+        yel.append("ค้นหาบริบทอัตโนมัติไม่สำเร็จ (ใช้ค่าตั้งต้นแทน)")
+    yel += [w for w in warns if warn_level(w) == "yel"]
+    return red, yel
+
+
+def _alert_box(red, yel, top=3):
+    if not red and not yel:
+        return ""
+    def blk(items, cls, title):
+        if not items:
+            return ""
+        li = "".join(f'<li class="{"b" if x.startswith("ร้ายแรง") or x.startswith("เจ้าที่ให้ราคา") else ""}">{e(x)}</li>' for x in items[:top])
+        more = f'<li class="more">+ อีก {len(items) - top} ข้อ (ดูบทตรวจสอบ/สรุป)</li>' if len(items) > top else ""
+        return f'<div class="s-al {cls}"><div class="h">{title} ({len(items)})</div><ul>{li}{more}</ul></div>'
+    return ('<div class="s-alerts">' + blk(red, "red", "ราคา/ข้อมูลผิดปกติ") + blk(yel, "yel", "สิ่งที่ต้องระวัง") + "</div>")
+
+
+def _hero(m, f, pick, res=None):
     fm = m.get("form") or {}
     rs = m.get("research") or {}
 
@@ -133,7 +209,7 @@ def _hero(m, f, pick):
           f'<div class="lb">{e(pick["label"])}</div>'
           f'<div class="row"><div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
           f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ระดับสัญญาณ</div></div></div>{stats}</div>'
-          f'{neg_band}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
+          f'{neg_band}{_alert_box(*alerts(res)) if res else ""}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
     return (f'<div class="s-hero s-rv"><div class="comp">{e(comp)}</div><div class="s-vs">{team("home")}<div class="s-vsx">VS</div>{team("away")}</div>'
             f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ระดับสัญญาณจัดจากคะแนนของ Rule (ต่ำ &lt; 1.2 ≤ กลาง &lt; 2.5 ≤ สูง) '
             f'ไม่ใช่โอกาสชนะ · เลื่อนลงเพื่อดูว่าระบบคิดอย่างไรทีละขั้น</div></div>')
@@ -634,7 +710,7 @@ def _ch_check(res):
     body += card("Home/Away Verification", vb, dl=.1)
     if warns:
         body += card(f"คำเตือนจากการอ่านข้อมูล ({len(warns)})", '<ul class="s-list">' + "".join(
-            f'<li class="{"s-down" if str(w).startswith("ร้ายแรง") else ""}">{e(w)}</li>' for w in warns) + "</ul>", dl=.15)
+            f'<li class="s-al-{warn_level(w) or "info"}{" b" if str(w).startswith("ร้ายแรง") else ""}">{e(w)}</li>' for w in warns) + "</ul>", dl=.15)
     return chapter("ch-check", "@N@", "บทที่ @N@ · ตรวจสอบ", "บริบทและความถูกต้องของข้อมูล", lead, f'<div class="s-grid">{body}</div>')
 
 
@@ -646,15 +722,10 @@ def _ch_summary(f, contribs, pick):
     opp = sorted([c for c in contribs if om and c["market"] == om], key=lambda c: -c["eff"])[:2]
     why = "".join(f'<li><b>{e(q.RULE_NAMES.get(c["rule"], c["rule"]))}</b> ({c["eff"]:+.2f}) — {e(c.get("note", ""))}</li>' for c in sup) \
         or "<li>ไม่มี Rule หนุนโดยตรง (ระบบบังคับฟันธงตามกติกาข้อ 13)</li>"
-    risk = [f'{q.RULE_NAMES.get(c["rule"], c["rule"])} ({c["eff"]:+.2f}) — {c.get("note", "")}' for c in opp]
-    if pick.get("move_only"):
-        risk.append("สัญญาณมาจากการไหลของราคาล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน (ระบบลดคะแนนเหลือ 60%)")
+    risk = _risk_items(f, contribs, pick)
     if pick.get("verify_fail"):
         risk.append("ตรวจเหย้า/เยือนไม่ผ่าน ควรตรวจรูปอีกครั้ง")
-    risk += list(pick.get("skip_reasons") or [])
-    if pick.get("tier") == "ต่ำ" and not pick.get("skip"):
-        risk.append("สัญญาณอ่อน ควรลดสัดส่วนเงินเดิมพัน")
-    rk = "".join(f"<li>{e(x)}</li>" for x in risk) or "<li>ไม่มีสัญญาณค้านที่สำคัญ</li>"
+    rk = "".join(f'<li class="s-al-{"red" if "เหย้า/เยือนไม่ผ่าน" in x else "yel"}">{e(x)}</li>' for x in risk) or "<li>ไม่มีสัญญาณค้านที่สำคัญ</li>"
     lead = (f'{"ระบบแนะนำให้<b>ข้ามไม้นี้</b> และติดตาม " if pick.get("skip") else "ไม้ของแมตช์นี้คือ "}<b>{e(pick["label"])}</b> '
             f'ระดับสัญญาณ<b>{e(pick.get("tier", ""))}</b> (คะแนน {pick["strength"]:.2f})')
     b = pick.get("best")
