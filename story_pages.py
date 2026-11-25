@@ -123,6 +123,7 @@ def alerts(res):
     red += sorted(rw, key=lambda w: not w.startswith("ร้ายแรง"))
     yel += _risk_items(f, res.get("contribs") or [], pick)
     rs = m.get("research") or {}
+    yel += _disc_alerts(f, rs.get("discipline"))
     if rs.get("confidence") == "low":
         yel.append("บริบทที่ค้นได้มีความน่าเชื่อถือต่ำ")
     if res.get("research_err"):
@@ -141,6 +142,48 @@ def _alert_box(red, yel, top=3):
         more = f'<li class="more">+ อีก {len(items) - top} ข้อ (ดูบทตรวจสอบ/สรุป)</li>' if len(items) > top else ""
         return f'<div class="s-al {cls}"><div class="h">{title} ({len(items)})</div><ul>{li}{more}</ul></div>'
     return ('<div class="s-alerts">' + blk(red, "red", "ราคา/ข้อมูลผิดปกติ") + blk(yel, "yel", "สิ่งที่ต้องระวัง") + "</div>")
+
+
+def _disc_html(f, d):
+    """สถิติใบเหลือง/ใบแดง/ผู้ตัดสิน (จากการค้นบริบท)"""
+    if not d:
+        return '<div class="s-note">ใบเหลือง/ใบแดง: ค้นไม่พบข้อมูล</div>'
+    rows = []
+    if d.get("home_yellow_pg") is not None or d.get("away_yellow_pg") is not None:
+        fm = lambda v: "-" if v is None else f"{v:.1f}"
+        rows.append(("ใบเหลืองเฉลี่ย/นัด", f'{fm(d.get("home_yellow_pg"))} : {fm(d.get("away_yellow_pg"))}'))
+    if d.get("home_red_total") is not None or d.get("away_red_total") is not None:
+        fm = lambda v: "-" if v is None else f"{v:g}"
+        rows.append(("ใบแดงทั้งซีซัน", f'{fm(d.get("home_red_total"))} : {fm(d.get("away_red_total"))}'))
+    ref = d.get("referee")
+    rs_ = [f'เหลือง {d["referee_yellow_pg"]:.1f}' if d.get("referee_yellow_pg") is not None else "",
+           f'แดง {d["referee_red_pg"]:.2f}' if d.get("referee_red_pg") is not None else "",
+           f'จุดโทษ {d["referee_pen_pg"]:.2f}' if d.get("referee_pen_pg") is not None else ""]
+    rs_ = " · ".join(x for x in rs_ if x)
+    if ref or rs_:
+        rows.append(("ผู้ตัดสิน" + (f" {ref}" if ref else ""), (rs_ + " ต่อนัด") if rs_ else "ไม่พบสถิติ"))
+    for side, k in (("home", "suspended_home"), ("away", "suspended_away")):
+        if isinstance(d.get(k), list):
+            rows.append((f"ติดโทษแบน ({f[side]})", ", ".join(d[k]) if d[k] else "ไม่มี"))
+    if not rows:
+        return '<div class="s-note">ใบเหลือง/ใบแดง: ค้นไม่พบข้อมูล</div>'
+    return ('<div class="s-xs s-mut" style="margin-top:10px">วินัย (เหย้า : เยือน) · เก็บไว้ทดสอบ ยังไม่มีผลต่อการฟันธง</div>'
+            + "".join(f'<div class="s-kv"><span>{e(a)}</span><b>{e(b)}</b></div>' for a, b in rows))
+
+
+def _disc_alerts(f, d):
+    out = []
+    if not d:
+        return out
+    ry, rr = d.get("referee_yellow_pg"), d.get("referee_red_pg")
+    if (ry is not None and ry >= 5.0) or (rr is not None and rr >= 0.25):
+        out.append("ผู้ตัดสินเข้มงวด (" + " · ".join(x for x in (f"เหลือง {ry:.1f}/นัด" if ry is not None else "",
+                                                             f"แดง {rr:.2f}/นัด" if rr is not None else "") if x)
+                   + ") เกมอาจพลิกจากใบแดง/จุดโทษ")
+    for side, k in (("home", "suspended_home"), ("away", "suspended_away")):
+        if d.get(k):
+            out.append(f"{f[side]} มีผู้เล่นติดโทษแบน {len(d[k])} คน: " + ", ".join(d[k][:3]))
+    return out
 
 
 def _hero(m, f, pick, res=None):
@@ -690,6 +733,7 @@ def _ch_check(res):
         cc.append(("หนีตาย/ลุ้นหนัก: " + f[ctx["desperation"]], "warn"))
     rs = m.get("research") or {}
     cb = chips(cc if len(cc) > 1 else cc + [("ไม่พบบริบทพิเศษ", "off")])
+    cb += _disc_html(f, rs.get("discipline"))
     if rs.get("evidence"):
         cb += '<ul class="s-list">' + "".join(f"<li>{e(x)}</li>" for x in rs["evidence"]) + "</ul>"
     conf = {"high": "สูง", "medium": "ปานกลาง", "low": "ต่ำ"}.get(rs.get("confidence"))
