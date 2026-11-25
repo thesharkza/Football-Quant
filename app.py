@@ -342,6 +342,7 @@ def get_opts():
 
 def make_result(m, opts, ext_warn=(), research_err=None, save=True):
     m.pop("warnings", None)
+    m.pop("_need_research", None)
     m, warns = q.validate_match(m)
     ctx = m["context"]
     ctx.update({k: True for k, v in opts["ctx"].items() if v})
@@ -361,6 +362,36 @@ def make_result(m, opts, ext_warn=(), research_err=None, save=True):
             "research_err": research_err, "saved": saved, "report": q.render_report(m, f, contribs, pick, store)}
 
 
+def run_research(m, opts, do_research=True, step=None):
+    """ค้นบริบทแมตช์ (+ข้อมูลทีมถ้าเปิดไว้) ใส่ลงใน m คืนข้อความผิดพลาดของการค้นบริบท (None = สำเร็จ)"""
+    m.pop("_need_research", None)
+    if not do_research:
+        return None
+    research_err = None
+    if step:
+        step("กำลังค้นหาข้อมูลบริบทแมตช์ (Google Search) ...")
+    try:
+        r, srcs, qs = q.research_context(m.get("home"), m.get("away"), m.get("league"), opts["model_ctx"], opts["api_key"])
+        q.apply_research(m, r, srcs, qs)
+    except SystemExit as e:
+        research_err = str(e.code)
+    except Exception as e:  # noqa
+        research_err = f"{type(e).__name__}: {str(e)[:150]}"
+    if opts.get("team_news"):
+        if step:
+            step("กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก ...")
+        try:
+            r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"), opts["model_ctx"], opts["api_key"])
+            q.apply_team_news(m, r2, srcs2, qs2)
+        except SystemExit as e:
+            m["team_news"] = {"error": str(e.code)}
+        except AttributeError:
+            m["team_news"] = {"error": "ไฟล์ football_quant_v58.py บน GitHub ยังเป็นรุ่นเก่า — อัปโหลดไฟล์รุ่นล่าสุดแล้วรีบูตแอป"}
+        except Exception as e:  # noqa  (ข้อมูลทีมเป็นส่วนเสริม ห้ามทำให้การวิเคราะห์ล้ม)
+            m["team_news"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
+    return research_err
+
+
 def pipeline_job(job, blobs, opts, do_research, save):
     """ขั้นตอนวิเคราะห์ทั้งหมด (รันในเธรดเบื้องหลัง ห้ามเรียกคำสั่งแสดงผลของ Streamlit) คืนผลลัพธ์หรือ raise"""
     step = job["steps"].append
@@ -376,34 +407,18 @@ def pipeline_job(job, blobs, opts, do_research, save):
         m = q.extract_from_images(paths, opts["model"], opts["api_key"])
     blobs.clear()                                   # ไม่เก็บรูปไว้ในหน่วยความจำ
     ext_warn = m.pop("warnings", None) or []
-    if do_research:
-        step("กำลังค้นหาข้อมูลบริบทแมตช์ (Google Search) ...")
-        try:
-            r, srcs, qs = q.research_context(m.get("home"), m.get("away"), m.get("league"), opts["model_ctx"], opts["api_key"])
-            q.apply_research(m, r, srcs, qs)
-        except SystemExit as e:
-            research_err = str(e.code)
-        except Exception as e:  # noqa
-            research_err = f"{type(e).__name__}: {str(e)[:150]}"
-    if do_research and opts.get("team_news"):
-        step("กำลังค้นข้อมูลทีม: xG/xGA, ตัวเจ็บ, บอลถ้วย, วันพัก ...")
-        try:
-            r2, srcs2, qs2 = q.research_team_news(m.get("home"), m.get("away"), m.get("league"), opts["model_ctx"], opts["api_key"])
-            q.apply_team_news(m, r2, srcs2, qs2)
-        except SystemExit as e:
-            m["team_news"] = {"error": str(e.code)}
-        except AttributeError:
-            m["team_news"] = {"error": "ไฟล์ football_quant_v58.py บน GitHub ยังเป็นรุ่นเก่า — อัปโหลดไฟล์รุ่นล่าสุดแล้วรีบูตแอป"}
-        except Exception as e:  # noqa  (ข้อมูลทีมเป็นส่วนเสริม ห้ามทำให้การวิเคราะห์ล้ม)
-            m["team_news"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
+    # ตรวจราคาที่อ่านได้ก่อนค้นบริบท: ถ้าผิดปกติร้ายแรงจะหยุดไว้ก่อน ไม่เสียโควตา API ค้นบริบทไปฟรี ๆ
     step("กำลังตรวจความสมเหตุสมผลของราคาที่อ่านได้ ...")
     chk = json.loads(json.dumps(m))
     chk.pop("warnings", None)
     q.validate_match(chk)
     if chk.get("critical"):
-        return {"_gate": True, "m": m, "ext_warn": ext_warn, "research_err": research_err,
+        if do_research:
+            m["_need_research"] = True              # ค้นบริบทภายหลัง เมื่อผู้ใช้กดวิเคราะห์ต่อ/แก้ตัวเลขแล้ว
+        return {"_gate": True, "m": m, "ext_warn": ext_warn, "research_err": None,
                 "critical": chk["critical"], "save": save,
                 "match_json": json.dumps(m, ensure_ascii=False, indent=2, default=str)}
+    research_err = run_research(m, opts, do_research, step) if do_research else None
     q._job_check()                                  # ถูกยกเลิก/หมดเวลา -> ไม่บันทึกผล
     step("กำลังวิเคราะห์ราคาและฟันธง ...")
     res = make_result(m, opts, ext_warn, research_err, save)
@@ -594,11 +609,17 @@ with tab1:
                         f'<ul style="margin:8px 0 0;padding-left:18px;font-weight:400">{items}</ul></div>', unsafe_allow_html=True)
             st.caption(("ตรวจตัวเลขในรูปเทียบกับข้อมูลที่อ่านได้ (เปิด “ตั้งค่าขั้นสูง” ด้านล่างเพื่อแก้ แล้วกด “วิเคราะห์ใหม่จากข้อมูลที่แก้ไข”) "
                         if IS_ADMIN else "ตรวจตัวเลขในรูปอีกครั้ง ") + "หรือกดวิเคราะห์ต่อเพื่อดูผล (ไม่เสียสิทธิ์เพิ่ม) · "
-                       "ถ้าวิเคราะห์ต่อโดยไม่แก้ตัวเลข ไม้นี้จะถูก “ข้ามอัตโนมัติ” เป็นไม้เงา ไม่ควรลงเงิน")
+                       "ถ้าวิเคราะห์ต่อโดยไม่แก้ตัวเลข ไม้นี้จะถูก “ข้ามอัตโนมัติ” เป็นไม้เงา ไม่ควรลงเงิน"
+                       + (" · ระบบยังไม่ได้ค้นบริบท (ประหยัดโควตา API) จะค้นตอนกดวิเคราะห์ต่อ หรือหลังแก้ตัวเลขจนผ่านการตรวจ"
+                          if g["m"].get("_need_research") else ""))
             g1, g2 = st.columns(2)
             if g1.button("▶ วิเคราะห์ต่อ (ไม้นี้จะเป็นไม้เงา)", type="primary", key="gate_go"):
                 try:
-                    ss["res"] = make_result(json.loads(json.dumps(g["m"])), get_opts(), g["ext_warn"], g["research_err"], g["save"])
+                    gm, rerr = json.loads(json.dumps(g["m"])), g["research_err"]
+                    if gm.get("_need_research"):
+                        with st.spinner("กำลังค้นหาข้อมูลบริบทแมตช์ ..."):
+                            rerr = run_research(gm, get_opts())
+                    ss["res"] = make_result(gm, get_opts(), g["ext_warn"], rerr, g["save"])
                     ss.pop("gate", None)
                     dismiss_job()
                     st.rerun()
@@ -645,7 +666,15 @@ with tab1:
         if st.button("วิเคราะห์ใหม่จากข้อมูลที่แก้ไข"):
             try:
                 m2 = json.loads(ss["match_json"])
-                ss["res"] = make_result(m2, get_opts(), save=bool(ss.get("opt_save", True)))
+                rerr = None
+                if m2.get("_need_research"):            # ข้ามการค้นบริบทไว้ตอนเจอราคาผิดปกติ -> ค้นตอนนี้ (ถ้าราคาที่แก้ผ่านแล้ว)
+                    chk2 = json.loads(json.dumps(m2))
+                    chk2.pop("warnings", None)
+                    q.validate_match(chk2)
+                    if not chk2.get("critical"):
+                        with st.spinner("ราคาผ่านการตรวจแล้ว กำลังค้นหาข้อมูลบริบทแมตช์ ..."):
+                            rerr = run_research(m2, get_opts())
+                ss["res"] = make_result(m2, get_opts(), research_err=rerr, save=bool(ss.get("opt_save", True)))
                 ss.pop("gate", None)
                 dismiss_job()
                 st.rerun()
@@ -777,11 +806,13 @@ with tab2:
         sure = st.checkbox("ยืนยัน: ระบบจะคำนวณน้ำหนัก Rule และ Rule ที่เรียนรู้ใหม่จากประวัติทั้งหมด (ผลลัพธ์เท่ากับใส่สกอร์ที่ถูกตั้งแต่แรก)", key=f"ed_ok_{eid}")
         b1, b2 = st.columns(2)
         if b1.button("บันทึกการแก้ไขสกอร์", type="primary", disabled=not (sure and changed)):
-            r_ = q.edit_result(store, eid, int(ehg), int(eag))
+            with st.spinner("กำลังคำนวณการเรียนรู้ใหม่จากประวัติทั้งหมด (ประมาณ 10-20 วินาที) ..."):
+                r_ = q.edit_result(store, eid, int(ehg), int(eag))
             ss["edit_msg"] = {"kind": "edit", "title": f"{fe['home']} vs {fe['away']}", **r_}
             st.rerun()
         if b2.button("↩ ยกเลิกผลนี้ (กลับเป็นรอผล)", disabled=not sure):
-            r_ = q.revert_result(store, eid)
+            with st.spinner("กำลังยกเลิกผลและคำนวณการเรียนรู้ใหม่ (ประมาณ 10-20 วินาที) ..."):
+                r_ = q.revert_result(store, eid)
             ss["edit_msg"] = {"kind": "revert", "title": f"{fe['home']} vs {fe['away']}", **r_}
             st.rerun()
         if not changed:
