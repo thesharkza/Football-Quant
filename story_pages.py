@@ -121,6 +121,12 @@ def _hero(m, f, pick):
         extra += f'<div class="s-sm" style="margin-top:8px;opacity:.8">ทางเลือกรอง: {e(mth(ru[0][0], f))} ({ru[0][1]:.2f})</div>'
     sm = f.get("score_model")
     if sm:
+        cp = q.cover_probs(f, sm)
+        if cp:
+            hh, aa = cp["hdp"]["home"], cp["hdp"]["away"]
+            _hf = lambda d: f' (ได้ครึ่ง {d["half_win"]:.0%})' if d["half_win"] >= .005 else ""
+            extra += (f'<div class="sc">โอกาสได้แฮนดิแคป (รวมทุกสกอร์): <b>{e(f["home"])} {hh["get"]:.0%}</b>{_hf(hh)} · '
+                      f'<b>{e(f["away"])} {aa["get"]:.0%}</b>{_hf(aa)}' + (f' · คืนทุน {hh["push"]:.0%}' if hh["push"] >= .005 else "") + "</div>")
         extra += (f'<div class="sc">ประตูคาดหมาย {sm["lh"]:.2f} – {sm["la"]:.2f} · สกอร์ที่น่าจะเป็น '
                   + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:3]) + "</div>")
     pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"ข้ามไม้นี้ · ติดตามเป็นไม้เงา" if skip else "สัญญาณฟันธงเดี่ยว · ราคาปัจจุบัน"}</div>'
@@ -172,7 +178,31 @@ def _ch_score(f):
     mk = sm["market_p"]
     fit = (f'<div class="s-note">ตรวจความเข้ากันกับตลาด: แบบจำลอง {pr[0]:.0%}/{pr[1]:.0%}/{pr[2]:.0%} เทียบราคา 1X2 {mk[0]:.0%}/{mk[1]:.0%}/{mk[2]:.0%} '
            f'(คลาด {sm["rmse"]:.1%}) · ใช้ข้อมูล {sm["inputs"]} ตลาด · แบบจำลอง Dixon-Coles</div>')
-    body = (card("สกอร์ที่น่าจะเป็นที่สุดแยกตามผล", sc3) + '<div class="s-grid" style="margin-top:12px">'
+    cp = q.cover_probs(f, sm)
+    cov = ""
+    if cp:
+        def _row(name, d, cls):
+            seg = "".join(f'<div style="width:{d[k] * 100:.1f}%;background:{c_}" title="{lab} {d[k]:.1%}"></div>'
+                          for k, c_, lab in (("win", "var(--pos)", "ได้เต็ม"), ("half_win", "rgba(61,220,151,.45)", "ได้ครึ่ง"),
+                                             ("push", "var(--neutral)", "คืนทุน"), ("half_lose", "rgba(255,107,107,.45)", "เสียครึ่ง"),
+                                             ("lose", "var(--neg)", "เสียเต็ม")) if d[k] >= .001)
+            parts_ = " · ".join(f"{lab} {d[k]:.0%}" for k, lab in (("win", "ได้เต็ม"), ("half_win", "ได้ครึ่ง"), ("push", "คืนทุน"),
+                                                                  ("half_lose", "เสียครึ่ง"), ("lose", "เสียเต็ม")) if d[k] >= .005)
+            return (f'<div style="margin:10px 0 4px;display:flex;justify-content:space-between;gap:8px"><b>{e(name)}</b>'
+                    f'<span class="s-num">ได้ {d["get"]:.0%}</span></div>'
+                    f'<div style="display:flex;height:10px;border-radius:4px;overflow:hidden;background:var(--surface-3)">{seg}</div>'
+                    f'<div class="s-note" style="margin-top:4px">{parts_}</div>')
+        Lh = cp["hdp"]["line"]
+        _ln = (lambda x: "0" if abs(x) < 1e-9 else f"{x:+.2f}")
+        cov = (_row(f'{f["home"]} {_ln(Lh)}', cp["hdp"]["home"], "h") + _row(f'{f["away"]} {_ln(-Lh)}', cp["hdp"]["away"], "a"))
+        if cp.get("ou"):
+            T = cp["ou"]["line"]
+            cov += _row(f"สูง {T:g}", cp["ou"]["over"], "o") + _row(f"ต่ำ {T:g}", cp["ou"]["under"], "u")
+        cov += ('<div class="s-note" style="margin-top:8px">รวมความน่าจะเป็นของทุกสกอร์ในตาราง แล้วแยกว่าแต่ละฝั่งได้/เสียเต็มหรือครึ่ง · '
+                'มาจากราคาตลาด จึงมักใกล้ 50/50 หลังหักค่าน้ำ · ใช้ดูว่าไม้ที่ระบบเลือก ตลาดให้โอกาสเท่าไร ไม่ใช่สัญญาณแยก</div>')
+    body = (card("สกอร์ที่น่าจะเป็นที่สุดแยกตามผล", sc3)
+            + (card("โอกาสที่แต่ละฝั่งได้แฮนดิแคป · สูง/ต่ำ (รวมทุกสกอร์)", cov, dl=.03) if cov else "")
+            + '<div class="s-grid" style="margin-top:12px">'
             + card("แผนที่ความน่าจะเป็นของสกอร์", heat, dl=.05) + card("6 อันดับแรก", rows + fit, dl=.1) + "</div>"
             + '<div class="s-note s-rv">สกอร์คำนวณจากราคาตลาดเท่านั้น (ไม่ได้ใช้ Rule) และไม่มีผลต่อการฟันธง · จากข้อมูลจริงของระบบ '
               'สกอร์อันดับ 1 ถูกประมาณ 1 ใน 8 นัด และอยู่ใน 3 อันดับแรกประมาณ 1 ใน 3 นัด</div>')
