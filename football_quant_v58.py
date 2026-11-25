@@ -3036,7 +3036,7 @@ def cmd_analyze(a):
 # ----------------------------------------------------------------------------
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MODEL_IMAGES = "gemini-3.5-flash-lite"    # อ่านรูป 5 รูป (ราคา/H2H/ฟอร์ม)
-MODEL_CONTEXT = "gemini-3.8-flash"        # ค้นบริบทแมตช์ + ข่าวทีม (ค้นเว็บ)
+MODEL_CONTEXT = "gemini-3.5-flash-lite"        # ค้นบริบทแมตช์ + ข่าวทีม (ค้นเว็บ)
 MODEL_CLV = "gemini-3.1-flash-lite"       # อ่านราคาปิดจากรูป (CLV)
 DEFAULT_MODEL = MODEL_IMAGES              # ค่าเริ่มต้นของคำสั่งบรรทัดคำสั่ง (CLI)
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
