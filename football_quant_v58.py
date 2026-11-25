@@ -1103,27 +1103,44 @@ def exp54(f, P, c):
         return _exp([("OU_OVER" if d > 0 else "OU_UNDER", 1.0)], [], f"R54: ฝั่งนี้น้ำสูงกว่าอีกฝั่ง {abs(d):.2f}")
 
 
+_FIT_CACHE = {}
+
+
 def _fit_x12(f, total=None):
-    """หา (lh, la) ที่ทำให้โอกาสเหย้า/เยือน (และเสมอ ถ้าไม่ล็อกประตูรวม) ตรงกับราคา 1X2 ปัจจุบัน"""
-    import numpy as np
+    """หา (lh, la) ที่ทำให้โอกาสเหย้า/เยือน (และเสมอ ถ้าไม่ล็อกประตูรวม) ตรงกับราคา 1X2 ปัจจุบัน (จำผลไว้ เพราะคำนวณหนัก)"""
     x = f.get("x12_cur")
     if not x or len(x) != 3 or min(x) <= 1:
         return None
+    key = (tuple(round(float(v), 4) for v in x), None if total is None else round(float(total), 4))
+    if key not in _FIT_CACHE:
+        if len(_FIT_CACHE) > 5000:
+            _FIT_CACHE.clear()
+        _FIT_CACHE[key] = _fit_x12_raw(x, total)
+    return _FIT_CACHE[key]
+
+
+def _fit_x12_raw(x, total=None):
+    import numpy as np
     pr = [1 / v for v in x]
     t = sum(pr)
     pH, pD, pA = (v / t for v in pr)
-    best = None
+    LH, LA = [], []
     for T in ([total] if total else np.arange(1.6, 4.01, 0.1)):
         for sp in np.arange(-2.5, 2.51, 0.05):
             lh, la = (T + sp) / 2, (T - sp) / 2
             if lh <= 0.05 or la <= 0.05:
                 continue
-            M = _score_grid(lh, la)
-            ph, pd = float(np.tril(M, -1).sum()), float(np.trace(M))
-            err = (ph - pH) ** 2 + (1 - ph - pd - pA) ** 2 + (0 if total else (pd - pD) ** 2)
-            if best is None or err < best[0]:
-                best = (err, lh, la)
-    return best[1:] if best else None
+            LH.append(lh)
+            LA.append(la)
+    if not LH:
+        return None
+    M = _score_grid(np.array(LH), np.array(LA))       # คำนวณทุกคู่พร้อมกัน (เร็วกว่าวนทีละคู่หลายสิบเท่า)
+    G = M.shape[-1]
+    ph = (M * np.tril(np.ones((G, G)), -1)).sum(axis=(-1, -2))
+    pd = np.trace(M, axis1=-2, axis2=-1)
+    err = (ph - pH) ** 2 + (1 - ph - pd - pA) ** 2 + (0 if total else (pd - pD) ** 2)
+    i = int(np.argmin(err))
+    return LH[i], LA[i]
 
 
 def _ev_line(M, kind, side, L, w):
@@ -2816,6 +2833,10 @@ def discover_rules(store, verbose=True):
             lr["enabled"] = lr["wr"] >= 0.5
     existing = {(tuple(r["tags"]), r["role"]): r for r in learned}
 
+    en_sets = {}
+    for r in learned:
+        if r.get("enabled", True):
+            en_sets.setdefault(r["role"], []).append(frozenset(r["tags"]))
     cands = []
     for (combo, role), (n, w) in stats.items():
         if combo == "__all__" or n < P["disc_min_n"] or (combo, role) in existing or universal & set(combo):
@@ -2826,7 +2847,8 @@ def discover_rules(store, verbose=True):
         lo, _ = wilson(p, n, P["disc_z"])
         if lo <= 0.5:
             continue
-        if any(set(r["tags"]) <= set(combo) and r["role"] == role and r.get("enabled", True) for r in learned):
+        cs = set(combo)
+        if any(t <= cs for t in en_sets.get(role, ())):
             continue
         cands.append((lo, len(combo), combo, role, n, p, w))
     cands.sort(key=lambda x: (-x[0], x[1]))
@@ -3036,7 +3058,7 @@ def cmd_analyze(a):
 # ----------------------------------------------------------------------------
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MODEL_IMAGES = "gemini-3.5-flash-lite"    # อ่านรูป 5 รูป (ราคา/H2H/ฟอร์ม)
-MODEL_CONTEXT = "gemini-3.5-flash-lite"        # ค้นบริบทแมตช์ + ข่าวทีม (ค้นเว็บ)
+MODEL_CONTEXT = "gemini-3.8-flash"        # ค้นบริบทแมตช์ + ข่าวทีม (ค้นเว็บ)
 MODEL_CLV = "gemini-3.1-flash-lite"       # อ่านราคาปิดจากรูป (CLV)
 DEFAULT_MODEL = MODEL_IMAGES              # ค่าเริ่มต้นของคำสั่งบรรทัดคำสั่ง (CLI)
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -4101,6 +4123,9 @@ def rebuild_learning(store):
     recs = [r for _, _, r in order]
     for r in recs:
         r["status"] = "_replay"                       # ซ่อนไว้ก่อน เพื่อไม่ให้ discover_rules เห็นข้อมูลจากอนาคต
+    had_inc = hasattr(store, "inc_stats")
+    prev_inc = getattr(store, "inc_stats", None)
+    store.inc_stats = {}                              # สะสมสถิติทีละนัด (เดิมคำนวณใหม่ทั้งประวัติทุกนัด = O(n²) ทำให้แอปค้าง)
     try:
         for rec in recs:
             rec["status"] = "settled"
@@ -4115,6 +4140,7 @@ def rebuild_learning(store):
                 rec["pick_profit_best"] = rec["pick_profit"]
             update_weights(store, rec, outcomes)
             rec["life_changes"] = lifecycle_update(store, rec["features"], outcomes)
+            accumulate_stats(store.inc_stats, rec["features"]["tags"], rec["role_r"], store.params)
             discover_rules(store, verbose=False)
             meta["settled"] += 1
             rec["settle_seq"] = meta["settled"]
@@ -4122,6 +4148,10 @@ def rebuild_learning(store):
         for r in recs:
             if r["status"] == "_replay":
                 r["status"] = "settled"
+        if had_inc:
+            store.inc_stats = prev_inc
+        else:
+            del store.inc_stats
     return len(recs)
 
 
