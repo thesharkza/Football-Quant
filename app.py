@@ -352,13 +352,16 @@ def make_result(m, opts, ext_warn=(), research_err=None, save=True):
         m["league_size"] = opts["league_size"]
     if not m.get("id"):
         m["id"] = q.slug(f"{m['home']}-vs-{m['away']}-{q.now_th('%Y%m%d-%H%M')}")
+    # เก็บสถานะการค้นบริบทไว้ในระเบียน (เดิมไม่เก็บ ทำให้ดูย้อนหลังไม่ได้ว่านัดไหนค้นไม่สำเร็จ)
+    m["research_status"] = ("ok" if m.get("research") else "missing") if research_err is None else f"error: {str(research_err)[:120]}"
     store = q.Store(DATA_DIR)
     f, contribs, pick = q.analyze_match(m, store)
+    crit = ["ร้ายแรง: " + x for x in (m.get("critical") or [])]
+    all_w = crit + list(ext_warn) + warns
     saved = None
     if save:
-        saved = q.record_prediction(store, m, f, contribs, pick, warns)
-    crit = ["ร้ายแรง: " + x for x in (m.get("critical") or [])]
-    return {"m": m, "f": f, "contribs": contribs, "pick": pick, "warns": crit + list(ext_warn) + warns,
+        saved = q.record_prediction(store, m, f, contribs, pick, all_w)   # เก็บคำเตือนครบ (รวมร้ายแรง/จากการอ่านรูป) เพื่อเปิดรายงานย้อนหลังได้ตรงกัน
+    return {"m": m, "f": f, "contribs": contribs, "pick": pick, "warns": all_w,
             "research_err": research_err, "saved": saved, "report": q.render_report(m, f, contribs, pick, store)}
 
 
@@ -531,6 +534,9 @@ def risk_banner(store_):
     if rk["dd_hit"]:
         st.error(f"ช่วงดิ่งถึงเพดานรวมแล้ว ({rk['dd']:+.2f} หน่วย · เพดาน −{float(P_['risk_dd_limit']):.1f}) · แนะนำพักเงินจริง "
                  "แล้วเก็บข้อมูลเป็นไม้กระดาษจนกว่าจะกลับมาทบทวน")
+    elif rk.get("dd_pct") is not None and rk["dd_pct"] <= -0.30:
+        st.error(f"ช่วงดิ่งเท่ากับ {-rk['dd_pct']:.0%} ของทุนแล้ว ({rk['dd'] * rk['unit']:+,.0f} บาท จากทุน {rk['bank']:,.0f}) "
+                 "ทั้งที่ยังไม่ถึงเพดานหน่วยที่ตั้งไว้ · แนะนำลดขนาดหน่วยหรือพักเงินจริง")
     return rk
 
 
@@ -865,6 +871,15 @@ with tab3:
         if n_unit and n_bank:
             st.caption(f"1 หน่วย = {n_unit / n_bank:.2%} ของทุน · ช่วงดิ่ง 60 หน่วย (กรณีแย่ที่จำลองไว้) = {60 * n_unit / n_bank:.0%} ของทุน"
                        + (" · แนะนำไม่เกิน 1% ต่อหน่วย" if n_unit / n_bank > 0.01 else ""))
+        if n_unit and n_bank:                        # เพดานที่ตั้งเป็น "หน่วย" ต้องไม่เกินทุน ไม่เช่นนั้นทุนหมดก่อนระบบเตือน
+            cf = []
+            if n_dd and n_dd * n_unit > n_bank:
+                cf.append(f"เพดานช่วงดิ่ง {n_dd:g} หน่วย = {n_dd * n_unit:,.0f} บาท มากกว่าทุน {n_bank:,.0f} บาท "
+                          f"(ควรไม่เกิน {n_bank * 0.3 / n_unit:.0f} หน่วย = 30% ของทุน)")
+            if n_day and n_day * n_unit > n_bank * 0.2:
+                cf.append(f"เพดานต่อวัน {n_day:g} หน่วย = {n_day * n_unit:,.0f} บาท = {n_day * n_unit / n_bank:.0%} ของทุนในวันเดียว")
+            if cf:
+                st.warning("ค่าที่ตั้งขัดกับทุน: " + " · ".join(cf) + " — ระบบจะเตือนช้ากว่าที่ทุนรับไหว")
         if st.button("บันทึกการตั้งค่าความเสี่ยง", key="rk_save"):
             store.state["params"].update({"risk_bankroll": float(n_bank), "risk_unit": float(n_unit), "risk_day_limit": float(n_day),
                                           "risk_dd_limit": float(n_dd), "risk_paper_default": bool(n_pp)})
