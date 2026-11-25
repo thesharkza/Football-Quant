@@ -174,6 +174,20 @@ STORY_CSS = """
   display:flex; flex-direction:column; gap:2px; border:1px solid rgba(255,107,107,0.35); }
 .s-negband b { color:var(--neg); font-size:15px; line-height:22px; font-weight:600; }
 .s-negband span { color:var(--text-2); font-size:13px; line-height:20px; }
+.s-alerts { margin-top:12px; display:flex; flex-direction:column; gap:8px; text-align:left; }
+.s-al { padding:8px 12px; border-radius:12px; border:1px solid; }
+.s-al.red { background:var(--neg-tint); border-color:rgba(255,107,107,0.35); }
+.s-al.yel { background:var(--warn-tint); border-color:rgba(245,185,66,0.35); }
+.s-al .h { font-size:13px; line-height:20px; font-weight:600; }
+.s-al.red .h, .s-al.red li { color:var(--neg); }
+.s-al.yel .h, .s-al.yel li { color:var(--warn); }
+.s-al ul { margin:2px 0 0; padding-left:18px; }
+.s-al li { font-size:13px; line-height:20px; }
+.s-al li.b, li.s-al-red.b { font-weight:600; }
+.s-al li.more { list-style:none; margin-left:-18px; opacity:.75; font-size:12px; }
+li.s-al-red { color:var(--neg); }
+li.s-al-yel { color:var(--warn); }
+li.s-al-info { color:var(--text-2); }
 
 /* form + scores */
 .s-dot { border-radius:4px; width:22px; height:22px; color:var(--on-signal); font-family:%(mono)s; font-weight:600; font-size:11px; }
