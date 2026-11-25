@@ -418,6 +418,7 @@ def build_features(m, P):
     f["away_wr5"], f["away_gf5"], f["away_ga5"] = _f5("away")
     f["r64_from"] = now_th("%Y-%m-%d")              # วันที่วิเคราะห์ (R64 นับเฉพาะนัดที่วิเคราะห์ตั้งแต่ 25 พ.ย. 2026)
     f["feat_v"] = 4                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 รุ่น 3, R51-R62 รุ่น 4 (นัดที่วิเคราะห์หลังเพิ่ม Rule = นอกกลุ่มตัวอย่าง)
+    f.update(discipline_features(m))                  # ใบเหลือง/ใบแดง/ผู้ตัดสิน (เก็บไว้ทดสอบ ยังไม่มีผลต่อการฟันธง)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     try:
         f["score_model"] = score_model(f)              # สกอร์ที่น่าจะเป็น (แสดงผลเท่านั้น ไม่มีผลต่อการฟันธง)
@@ -3058,7 +3059,7 @@ def cmd_analyze(a):
 # ----------------------------------------------------------------------------
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MODEL_IMAGES = "gemini-3.5-flash-lite"    # อ่านรูป 5 รูป (ราคา/H2H/ฟอร์ม)
-MODEL_CONTEXT = "gemini-3.8-flash"        # ค้นบริบทแมตช์ + ข่าวทีม (ค้นเว็บ)
+MODEL_CONTEXT = "gemini-3.5-flash-lite"        # ค้นบริบทแมตช์ + ข่าวทีม (ค้นเว็บ)
 MODEL_CLV = "gemini-3.1-flash-lite"       # อ่านราคาปิดจากรูป (CLV)
 DEFAULT_MODEL = MODEL_IMAGES              # ค่าเริ่มต้นของคำสั่งบรรทัดคำสั่ง (CLI)
 MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -3402,6 +3403,10 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
     เป็นค่าเฉลี่ยต่อนัด: home_gf, home_ga (ประตูได้/เสียของเจ้าบ้านในบ้าน), away_gf, away_ga (ของทีมเยือนนอกบ้าน), games_home, games_away (จำนวนนัดที่ใช้)
     ไม่พบ/ไม่ชัวร์ให้ null ทั้งก้อน
 13. away_form_away = ผลเกมเยือน 5 นัดหลังสุดของทีมเยือน เป็น {"w":..,"d":..,"l":..} รวม = 5 ไม่ชัวร์ให้ null
+14. discipline = สถิติวินัย (ซีซันนี้ รายการเดียวกันถ้ามี) ค่าต่อนัด: home_yellow_pg, away_yellow_pg (ใบเหลืองเฉลี่ยต่อนัดของแต่ละทีม),
+    home_red_total, away_red_total (ใบแดงรวมทั้งซีซัน), referee (ชื่อผู้ตัดสินนัดนี้ ถ้าประกาศแล้ว),
+    referee_yellow_pg, referee_red_pg (ใบเหลือง/แดงเฉลี่ยต่อนัดที่ผู้ตัดสินคนนี้แจก), referee_pen_pg (จุดโทษต่อนัด),
+    suspended_home, suspended_away (รายชื่อผู้เล่นที่ติดโทษแบนนัดนี้ เพราะใบเหลืองสะสม/ใบแดง) — ไม่พบให้ null ห้ามเดา
 9. evidence = ข้อความสั้นภาษาไทยไม่เกิน 6 ข้อ บอกหลักฐานสำคัญของแต่ละ flag ที่เป็น true
 10. confidence = high | medium | low
 
@@ -3414,6 +3419,8 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
  "home_form_home":null,"away_form_away":null,"late_goal_tendency":false,
  "women_or_regional":false,"asian_cup":false,
  "venue_stats":{"home_gf":null,"home_ga":null,"away_gf":null,"away_ga":null,"games_home":null,"games_away":null},
+ "discipline":{"home_yellow_pg":null,"away_yellow_pg":null,"home_red_total":null,"away_red_total":null,"referee":null,
+  "referee_yellow_pg":null,"referee_red_pg":null,"referee_pen_pg":null,"suspended_home":null,"suspended_away":null},
  "evidence":["..."],"confidence":"medium"}"""
 
 
@@ -3584,14 +3591,52 @@ def apply_research(m, r, sources=None, queries=None):
         m["stats"] = {**{k: float(vs[k]) for k in keys}, "venue": True,
                       "games_home": vs.get("games_home") if _num(vs.get("games_home")) else None,
                       "games_away": vs.get("games_away") if _num(vs.get("games_away")) else None}
+    disc = clean_discipline(r.get("discipline"))
     ev = [str(x) for x in (r.get("evidence") or []) if x][:6] if isinstance(r.get("evidence"), list) else []
     m["research"] = {"evidence": ev, "sources": (sources or [])[:8], "queries": (queries or [])[:6],
                      "confidence": r.get("confidence") if r.get("confidence") in ("high", "medium", "low") else None,
                      "derby_reason": r.get("derby_reason"), "desperation_reason": mo.get("reason"),
                      "avg_goals": lg.get("avg_goals_per_match") if _num(lg.get("avg_goals_per_match")) else None,
                      "draw_rate": lg.get("draw_rate_pct") if _num(lg.get("draw_rate_pct")) else None,
-                     "competition": comp.get("name"), "search": r.get("_search")}
+                     "competition": comp.get("name"), "search": r.get("_search"), "discipline": disc}
     return m
+
+
+DISC_RANGES = {"home_yellow_pg": (0, 7), "away_yellow_pg": (0, 7), "home_red_total": (0, 25), "away_red_total": (0, 25),
+               "referee_yellow_pg": (0, 10), "referee_red_pg": (0, 1.5), "referee_pen_pg": (0, 1.5)}
+
+
+def clean_discipline(d):
+    """ตรวจสถิติใบเหลือง/ใบแดงที่ค้นได้: เก็บเฉพาะตัวเลขในช่วงที่เป็นไปได้ (ค่าแปลก = ทิ้ง) คืน dict หรือ None"""
+    if not isinstance(d, dict):
+        return None
+    out = {}
+    for k, (lo, hi) in DISC_RANGES.items():
+        v = d.get(k)
+        if _num(v) and lo <= v <= hi:
+            out[k] = round(float(v), 2)
+    ref = d.get("referee")
+    if isinstance(ref, str) and 2 <= len(ref.strip()) <= 60 and ref.strip().lower() not in ("null", "none", "unknown", "tbd", "-"):
+        out["referee"] = ref.strip()
+    for k in ("suspended_home", "suspended_away"):
+        v = d.get(k)
+        if isinstance(v, list):
+            names = [str(x).strip() for x in v if isinstance(x, str) and 1 < len(x.strip()) <= 40][:6]
+            out[k] = names
+    return out or None
+
+
+def discipline_features(m):
+    """สถิติวินัยเป็น features (เก็บไว้ทดสอบภายหลัง · ยังไม่มี Rule ใดใช้)"""
+    d = ((m.get("research") or {}).get("discipline")) or {}
+    g = lambda k: d.get(k) if _num(d.get(k)) else None
+    yp = [g("home_yellow_pg"), g("away_yellow_pg")]
+    return {"disc_yellow_pg": round(sum(yp), 2) if None not in yp else None,
+            "disc_ref_yellow_pg": g("referee_yellow_pg"), "disc_ref_red_pg": g("referee_red_pg"),
+            "disc_ref_pen_pg": g("referee_pen_pg"),
+            "disc_red_total": (g("home_red_total"), g("away_red_total")),
+            "disc_susp": (len(d["suspended_home"]) if isinstance(d.get("suspended_home"), list) else None,
+                          len(d["suspended_away"]) if isinstance(d.get("suspended_away"), list) else None)}
 
 
 # ----------------------------------------------------------------------------
