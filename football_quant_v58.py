@@ -3181,25 +3181,37 @@ def consolidate_books(m):
             chg[key] = {f1: _med(d1), f2: _med(d2), "n": len(d1)}
     m["water_chg"] = chg
     # ราคาดีที่สุดของแต่ละทางเลือก (ราคาปัจจุบัน เฉพาะเจ้าที่อยู่เรตเดียวกับเรตรวม) สำหรับ line shopping
-    best = {}
+    best, cand = {}, {}
     cur_h, cur_o = (m.get("hdp") or {}).get("current"), (m.get("ou") or {}).get("current")
+
+    def _row_ok(a, b):                                # แถวที่อ่านค่าน้ำผิด (ค่าต๋งผิดรูป/น้ำสูงเกินจริง) ไม่นำมาเป็น "ราคาดีที่สุด"
+        ov = 1 / (1 + a) + 1 / (1 + b)
+        return 0.5 <= a <= 1.35 and 0.5 <= b <= 1.35 and 0.99 <= ov <= 1.12
     for b in books:
         nm = b.get("name", "?")
         h = (b.get("hdp") or {}).get("current") or {}
-        if cur_h and all(_num(h.get(k)) for k in ("line", "home_water", "away_water")) and abs(h["line"] - cur_h["line"]) < 1e-9:
+        if cur_h and all(_num(h.get(k)) for k in ("line", "home_water", "away_water")) and abs(h["line"] - cur_h["line"]) < 1e-9 \
+                and _row_ok(h["home_water"], h["away_water"]):
             for mk_, k in (("HDP_HOME", "home_water"), ("HDP_AWAY", "away_water")):
-                if mk_ not in best or h[k] > best[mk_]["price"]:
-                    best[mk_] = {"book": nm, "price": h[k]}
+                cand.setdefault(mk_, []).append((h[k], nm, cur_h[k]))
         o = (b.get("ou") or {}).get("current") or {}
-        if cur_o and all(_num(o.get(k)) for k in ("line", "over", "under")) and abs(o["line"] - cur_o["line"]) < 1e-9:
+        if cur_o and all(_num(o.get(k)) for k in ("line", "over", "under")) and abs(o["line"] - cur_o["line"]) < 1e-9 \
+                and _row_ok(o["over"], o["under"]):
             for mk_, k in (("OU_OVER", "over"), ("OU_UNDER", "under")):
-                if mk_ not in best or o[k] > best[mk_]["price"]:
-                    best[mk_] = {"book": nm, "price": o[k]}
+                cand.setdefault(mk_, []).append((o[k], nm, cur_o[k]))
         x = (b.get("x12") or {}).get("current")
         if isinstance(x, list) and len(x) == 3 and all(_num(v) for v in x):
             for mk_, i in (("X12_HOME", 0), ("X12_AWAY", 2)):
                 if mk_ not in best or x[i] - 1 > best[mk_]["price"]:
                     best[mk_] = {"book": nm, "price": round(x[i] - 1, 3)}
+    for mk_, rows in cand.items():                    # ดีกว่าราคากลางเกิน 0.20 = น่าจะอ่านผิด/สลับฝั่ง -> ไม่ใช้
+        ok = [r for r in rows if r[0] <= r[2] + 0.20]
+        if len(ok) < len(rows):
+            w.append(f"ราคาดีที่สุด {mk_}: ตัด {', '.join(f'{n} @{p_:.2f}' for p_, n, _ in rows if (p_, n, _) not in ok)} "
+                     f"(สูงกว่าราคากลางเกิน 0.20 น่าจะอ่านผิด)")
+        if ok:
+            p_, nm, _ = max(ok, key=lambda r: r[0])
+            best[mk_] = {"book": nm, "price": p_}
     m["best_price"] = best
     # สัดส่วนโบรกเกอร์ที่ขยับเรต HDP ไปทางเดียวกับเรตรวม (ใช้ใน Rule 17)
     m["hdp_agree"] = None
