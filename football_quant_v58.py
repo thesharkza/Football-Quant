@@ -86,7 +86,7 @@ DEFAULT_PARAMS = {
     "judge_max_n": 150,          # Rule ที่ผลยังเป็นบวกแต่ไม่ชัดตอนครบ judge_n -> ติดตามต่อจนครบเท่านี้ก่อนถอด
     "revive_rules": ["R49", "R61"],   # Rule ที่ถูกถอดตอนครบ 70 ทั้งที่ผลเป็นบวก -> เปิดติดตามต่อ (25 พ.ย. 2026)
     "suspended_base": [],
-    "cup_rank_off_all": False,         # True = ตัดอันดับในบอลถ้วยทุกรอบ รวมรอบแบ่งกลุ่ม/ลีกเฟส (ค่าเริ่ม: ตัดเฉพาะน็อกเอาต์/ถ้วยในประเทศ/กระชับมิตร)              # Rule หลักที่ผู้ใช้อนุมัติให้พัก (ยังติดตามผล แต่ไม่นับคะแนน)
+    "cup_rank_off_all": False,         # True = ตัดอันดับในบอลถ้วยทุกรอบ รวมรอบแบ่งกลุ่ม/ลีกเฟส (ค่าเริ่ม: ตัดเฉพาะน็อกเอาต์/ถ้วยในประเทศ/กระชับมิตร)
     "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
     "team_news_enabled": False,
     "risk_bankroll": 0.0,        # ทุน (บาท) · 0 = ไม่ตั้ง
@@ -1336,6 +1336,16 @@ def _wilson_hi(w, n, z):
     return wilson(w / n, n, z)[1] if n else 1.0
 
 
+POST_MIN_N, POST_Z = 40, 1.645
+
+
+def _post_bad(e, be):
+    """ถอด Rule ที่ใช้งานอยู่เมื่อผล "หลังเปิดใช้" ครบ POST_MIN_N ครั้ง (ไม่นับเจ๊า) และขอบบนของอัตราชนะยังต่ำกว่าจุดคุ้มทุน
+    (แทนเกณฑ์เดิม 'ลดลง 3 ช่วงติด' ที่จำลองแล้วถอด Rule ดีจริง (ชนะ 59%) ภายใน 150 ครั้งถึง ~99%)"""
+    pw, pl = e.get("post") or [0, 0]
+    return pw + pl >= POST_MIN_N and _wilson_hi(pw, pw + pl, POST_Z) < be
+
+
 def _declining(results, W, be):
     """อัตราชนะลดลงต่อเนื่อง 3 ช่วงล่าสุด (ช่วงละ W ครั้ง ไม่นับเจ๊า) และช่วงล่าสุดต่ำกว่าจุดคุ้มทุน"""
     dec = [x for x in results if x != 0]
@@ -1357,9 +1367,15 @@ def lifecycle_update(store, f, outcomes):
     base = _build_contribs(_base_raw(f, P), f, P, S)
     changes = []
     be = P["breakeven_wr"]
+    for rid in (P.get("approved_rules") or []):       # Rule ที่ผู้ใช้อนุมัติ แต่ถูกเกณฑ์ "ลดลง 3 ช่วงติด" (เกณฑ์เก่าที่ผิด) ถอด -> คืนสถานะใช้งาน
+        e0 = life.get(rid)
+        if e0 and e0.get("status") in ("shadow", "retired") and not e0.get("restored") and \
+                ("ลดลงต่อเนื่อง" in str(e0.get("reason")) or (e0.get("revived") and e0.get("ready_at") is not None)):
+            e0.update(status="active", restored=True, post=[0, 0],
+                      reason="คืนสถานะใช้งาน (ผู้ใช้อนุมัติไว้ · ถูกถอดด้วยเกณฑ์เก่า 'ลดลง 3 ช่วงติด' ที่ถอด Rule ดีบ่อยเกินไป)")
     for rid in (P.get("revive_rules") or []):          # เปิดติดตามต่อทันที แม้นัดนี้ Rule นั้นไม่ทำงาน
         e0 = life.get(rid)
-        if e0 and e0.get("status") == "retired" and not e0.get("revived"):
+        if e0 and e0.get("status") == "retired" and not e0.get("revived") and "ไม่ดีกว่าจุดคุ้มทุน" in str(e0.get("reason")):
             e0.update(status="shadow", revived=True, reason=f"เปิดติดตามต่อ (ผลเป็นบวก {e0['w']}-{e0['l']}) · รอครบ {P['judge_max_n']} ครั้ง")
     for rid, c in candidates_for(f, P, store, base).items():
         if c["market"] not in outcomes:
@@ -1367,7 +1383,7 @@ def lifecycle_update(store, f, outcomes):
         e = life.setdefault(rid, {"kind": c["kind"], "status": "shadow", "n": 0, "w": 0, "l": 0, "res": [],
                                   "since": seq, "reason": "เริ่มติดตามผลเบื้องหลัง"})
         if e["status"] == "retired":
-            if rid in (P.get("revive_rules") or []) and not e.get("revived"):
+            if rid in (P.get("revive_rules") or []) and not e.get("revived") and "ไม่ดีกว่าจุดคุ้มทุน" in str(e.get("reason")):
                 e.update(status="shadow", revived=True, reason=f"เปิดติดตามต่อ (ผลเป็นบวก {e['w']}-{e['l']}) · รอครบ {P['judge_max_n']} ครั้ง")
             else:
                 continue
@@ -1375,6 +1391,9 @@ def lifecycle_update(store, f, outcomes):
         e["n"] += 1
         e["w"] += r > 0
         e["l"] += r < 0
+        if e["status"] == "active":                    # ผลหลังเปิดใช้ (ใช้ตัดสินถอด Rule ที่ใช้งานอยู่)
+            pw_, pl_ = e.get("post") or [0, 0]
+            e["post"] = [pw_ + (r > 0), pl_ + (r < 0)]
         e["res"] = (e["res"] + [round(r, 2)])[-120:]
         dec = e["w"] + e["l"]
         wr = e["w"] / dec if dec else 0.0
@@ -1382,8 +1401,10 @@ def lifecycle_update(store, f, outcomes):
         new, why = old, None
         if dec >= P["retire_min_n"] and _wilson_hi(e["w"], dec, P["lb_z_judge"]) < be:
             new, why = "retired", f"สวนทาง: อัตราชนะ {wr:.0%} ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ ({e['w']}/{dec})"
-        elif old == "active" and _declining(e["res"], P["decline_window"], be):
-            new, why = "retired", f"อัตราชนะลดลงต่อเนื่อง 3 ช่วงล่าสุดจนต่ำกว่าจุดคุ้มทุน (รวม {wr:.0%})"
+        elif old == "active" and _post_bad(e, be):
+            pw, pl = e["post"]
+            new, why = "retired", (f"หลังเปิดใช้ ชนะ {pw}-{pl} ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ "
+                                   f"(ตรวจเมื่อครบ {POST_MIN_N}+ ครั้งหลังเปิดใช้)")
         elif old == "shadow":
             if dec >= P["unlock_min_n"] and wr >= P["unlock_wr"] and _wilson_lo(e["w"], dec, P["lb_z_fast"]) > be:
                 new, why = "active", f"ผ่านเกณฑ์ทางลัด: ชนะ {wr:.0%} จาก {dec} ครั้ง (≥ {P['unlock_wr']:.0%}) นอกกลุ่มตัวอย่าง"
