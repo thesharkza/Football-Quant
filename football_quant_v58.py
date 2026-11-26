@@ -85,6 +85,7 @@ DEFAULT_PARAMS = {
     "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
     "judge_max_n": 150,          # Rule ที่ผลยังเป็นบวกแต่ไม่ชัดตอนครบ judge_n -> ติดตามต่อจนครบเท่านี้ก่อนถอด
     "revive_rules": ["R49", "R61"],   # Rule ที่ถูกถอดตอนครบ 70 ทั้งที่ผลเป็นบวก -> เปิดติดตามต่อ (25 พ.ย. 2026)
+    "suspended_base": [],              # Rule หลักที่ผู้ใช้อนุมัติให้พัก (ยังติดตามผล แต่ไม่นับคะแนน)
     "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
     "team_news_enabled": False,
     "risk_bankroll": 0.0,        # ทุน (บาท) · 0 = ไม่ตั้ง
@@ -1604,6 +1605,109 @@ def negband_track(history):
             "profit": pf, "saved": -pf, "expected": ex, "z": (pf - ex) / math.sqrt(var) if var > 0 else 0.0}
 
 
+NEGBAND_TEST_N = 120     # ป้ายช่วงคะแนนติดลบ: ทดสอบให้ครบกี่ไม้ก่อนตัดสิน
+
+
+def negband_status(history):
+    """สถานะของป้าย 'ช่วงคะแนนติดลบ -> แนะนำข้าม': testing (ยังไม่ครบ) / pass (ข้ามแล้วช่วยจริง z <= -2) / fail (ครบแล้วไม่ช่วย -> เลิกแสดงป้าย)"""
+    t = negband_track(history)
+    n = t.get("n", 0)
+    if n >= NEGBAND_TEST_N:
+        t["status"] = "pass" if t["z"] <= -2 else "fail"
+    else:
+        t["status"] = "testing"
+    t["need"] = NEGBAND_TEST_N
+    return t
+
+
+# ---- เฝ้าดู Rule หลัก และการ "ข้ามเพราะสัญญาณอ่อน" (เสนอให้ผู้ใช้อนุมัติเมื่อถึงเกณฑ์ ไม่เปลี่ยนเอง) ----
+BASE_WATCH_N, BASE_WATCH_Z = 150, -2.5
+WEAKSKIP_N, WEAKSKIP_Z = 200, 2.0
+
+
+def _mk_waters(f, mk):
+    if mk == "OU_OVER":
+        return f.get("over_water_c"), f.get("under_water_c")
+    if mk == "OU_UNDER":
+        return f.get("under_water_c"), f.get("over_water_c")
+    if str(mk).startswith("HDP"):
+        return (f["fav_water_c"], f["dog_water_c"]) if mk == f.get("fav_hdp") else (f["dog_water_c"], f["fav_water_c"])
+    return None, None
+
+
+def _vs_noskill(items):
+    """items = [(halves, water_mine, water_other)] -> n, w, l, profit, expected, z"""
+    import math
+    n = w = l = 0
+    pf = ex = var = 0.0
+    for hv, wm, wo in items:
+        r = sum(hv) / len(hv)
+        n += 1
+        w += r > 0
+        l += r < 0
+        pf += profit(hv, wm)
+        p = _devig_p(wm, wo)
+        e = p * wm - (1 - p)
+        ex += e
+        var += p * wm * wm + (1 - p) - e * e
+    return {"n": n, "w": w, "l": l, "profit": pf, "expected": ex, "z": (pf - ex) / math.sqrt(var) if var > 0 else 0.0}
+
+
+def base_rule_watch(history, P):
+    """ผลของ Rule หลักแต่ละข้อ (ถ้าแทงตามทุกครั้งที่ Rule ให้สัญญาณ) เทียบคนแทงสุ่ม
+    เสนอพักเมื่อครบ BASE_WATCH_N ครั้ง และ z <= BASE_WATCH_Z (เกณฑ์เข้มเพราะมี Rule หลายสิบข้อ โชคร้ายบางข้อเป็นเรื่องปกติ)"""
+    items = {}
+    for r in history:
+        if r.get("status") != "settled" or not r.get("score"):
+            continue
+        f = r["features"]
+        o = settle_all(r, *r["score"])
+        seen = set()
+        for c in r.get("contribs") or []:
+            rid, mk = c["rule"], c["market"]
+            if rid.startswith("L") or rid.startswith("exp") or (rid, mk) in seen or mk not in o or mk[:2] not in ("HD", "OU"):
+                continue
+            if rid in EXPERIMENTAL:
+                continue
+            seen.add((rid, mk))
+            wm, wo = _mk_waters(f, mk)
+            if not wm or not wo:
+                continue
+            items.setdefault(rid, []).append((o[mk][1], wm, wo))
+    susp = set(P.get("suspended_base") or [])
+    out = []
+    for rid, it in items.items():
+        s_ = _vs_noskill(it)
+        s_["rule"] = rid
+        s_["suspended"] = rid in susp
+        s_["propose"] = (not s_["suspended"]) and s_["n"] >= BASE_WATCH_N and s_["z"] <= BASE_WATCH_Z
+        s_["propose_back"] = s_["suspended"] and s_["z"] > 0      # พักแล้วผลกลับมาบวก -> เสนอเปิดคืน
+        out.append(s_)
+    return sorted(out, key=lambda x: x["z"])
+
+
+def weakskip_study(history):
+    """ไม้ที่ระบบข้ามเพราะ 'สัญญาณอ่อน': ถ้าแทงไปจะได้เท่าไร (บวกมาก = การข้ามทำให้พลาดไม้ดี)"""
+    it = []
+    for r in history:
+        if r.get("status") != "settled" or not r["pick"].get("skip"):
+            continue
+        if not any("สัญญาณอ่อน" in x for x in r["pick"].get("skip_reasons") or []):
+            continue
+        mk = r["pick"]["market"]
+        if mk[:2] not in ("HD", "OU"):
+            continue
+        wm, wo = _mk_waters(r["features"], mk)
+        if not wm or not wo:
+            continue
+        it.append((settle_all(r, *r["score"])[mk][1], r["pick"]["price_win"], wo))
+    s_ = _vs_noskill(it)
+    s_["need"], s_["z_need"] = WEAKSKIP_N, WEAKSKIP_Z
+    s_["status"] = "propose_off" if s_["n"] >= WEAKSKIP_N and s_["z"] >= WEAKSKIP_Z else \
+        "keep" if s_["n"] >= WEAKSKIP_N else "testing"
+    return s_
+
+
 def _side_waters(rec):
     f, mk = rec["features"], rec["pick"]["market"]
     if mk.startswith("OU"):
@@ -2031,6 +2135,12 @@ class Store:
 def analyze_match(m, store):
     f, contribs, pick = analyze_features(m, build_features(m, store.params), store)
     gate_check(store, f, pick)
+    if pick.get("gate"):
+        try:
+            nb = negband_status(store.history)
+            pick["gate"]["nb_status"] = {k: nb.get(k) for k in ("status", "n", "need", "saved", "z")}
+        except Exception:  # noqa
+            pass
     crit = list(m.get("critical") or [])
     if crit and not pick.get("skip"):                  # ราคาที่อ่านจากรูปผิดปกติร้ายแรง -> ไม่ลงเงิน (แก้ตัวเลขแล้ววิเคราะห์ใหม่จึงลงทุนได้)
         pick["skip"] = True
@@ -2183,9 +2293,12 @@ def analyze_features(m, f, store):
 
     # ---- รวมคะแนนต่อทางเลือก
     scores = {k: 0.0 for k in ALL_MARKETS}
-    use = [c for c in contribs if (not flow_only) or c["group"] in ("flow", "price")]
+    susp = set(P.get("suspended_base") or [])         # Rule หลักที่ผู้ใช้อนุมัติให้พัก: ยังคำนวณเก็บไว้ (ติดตามผล) แต่ไม่นับคะแนน
     for c in contribs:
         c["counted"] = False
+        if c["rule"] in susp:
+            c["suspended"] = True
+    use = [c for c in contribs if ((not flow_only) or c["group"] in ("flow", "price")) and c["rule"] not in susp]
     mode = P.get("score_mode", "sum")
     if mode == "grouped":                            # นับกลุ่มข้อมูลละครั้ง: เอาค่าสูงสุดของแต่ละกลุ่มต่อทางเลือก
         best = {}
@@ -2229,7 +2342,7 @@ def analyze_features(m, f, store):
     # --- Current Odds Priority: สัญญาณที่มาจากการไหลของราคา (เทียบราคาเปิด) ล้วน ๆ ถูกลดน้ำหนัก ---
     def cur_support(mk_):
         base = mk_.replace("X12_", "HDP_") if mk_.startswith("X12_") else mk_
-        return sum(c["eff"] for c in contribs if c["market"] == base and c["rule"] not in MOVEMENT_RULES)
+        return sum(c["eff"] for c in contribs if c["market"] == base and c["rule"] not in MOVEMENT_RULES and c["rule"] not in susp)
     moved = set()
     adj = []
     for mk_, st_ in cands:
@@ -2388,8 +2501,6 @@ def render_report(m, f, contribs, pick, store):
         L.append(f"  ตัวเลือกที่ถูกแบน (Veto): {', '.join(pick['veto'])}")
     if pick.get("move_only"):
         L.append("  ⚠ Current Odds Priority: สัญญาณนี้มาจากการไหลของราคา (เทียบราคาเปิด) ล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน ระบบลดคะแนนเหลือ 60% แล้ว")
-    if pick["tier"] == "ต่ำ":
-        L.append("  ⚠ สัญญาณอ่อน: โปรแกรมบังคับฟันธงตาม Rule 13 แต่ควรลดสัดส่วนเงินเดิมพัน")
     sm = f.get("score_model")
     if sm:
         br = best_by_result(sm)
@@ -2411,8 +2522,10 @@ def render_report(m, f, contribs, pick, store):
         st_th = {"pass": "ผ่าน · ลงทุนได้", "fail": "ไม่ผ่าน · งดลงทุน" if g["enabled"] else "ไม่ผ่าน (ตัวกรองปิดอยู่)", "data": "ข้อมูลยังไม่พอ · ลงทุนตามปกติ"}[g["status"]]
         L.append(f"\n🚦 ตัวกรองช่วงคะแนน: {g['kind_th']} คะแนน {g['label']} — {st_th}"
                  + (f" (ที่ผ่านมา {g['w']}-{g['l']}, กำไร {g['profit']:+.2f} จาก {g['n']} ไม้)" if g["n"] else ""))
-        if g["n"] >= 20 and g["profit"] <= -2.0 and not pick.get("skip"):
-            L.append("   → ช่วงคะแนนติดลบ: แนะนำข้ามไม้นี้ตอนแทงจริง (ไม่ต้องแทงสวน)")
+        nbs = g.get("nb_status") or {}
+        if g["n"] >= 20 and g["profit"] <= -2.0 and not pick.get("skip") and nbs.get("status") != "fail":
+            L.append("   → ช่วงคะแนนติดลบ: " + ("แนะนำข้ามไม้นี้ตอนแทงจริง (ไม่ต้องแทงสวน)" if nbs.get("status") == "pass" else
+                     f"พิจารณาข้าม · ป้ายนี้กำลังทดสอบ {nbs.get('n', 0)}/{nbs.get('need', 120)} ไม้ (ไม่ต้องแทงสวน)"))
     L += team_news_lines(m)
     return "\n".join(L)
 
