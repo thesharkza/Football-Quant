@@ -87,8 +87,6 @@ def _risk_items(f, contribs, pick):
     if pick.get("move_only"):
         risk.append("สัญญาณมาจากการไหลของราคาล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน (ระบบลดคะแนนเหลือ 60%)")
     risk += [x for x in (pick.get("skip_reasons") or []) if "ผิดปกติร้ายแรง" not in x]
-    if pick.get("tier") == "ต่ำ" and not pick.get("skip"):
-        risk.append("สัญญาณอ่อน ควรลดสัดส่วนเงินเดิมพัน")
     return risk
 
 
@@ -218,10 +216,18 @@ def _hero(m, f, pick, res=None):
                        "data": f"ช่วงคะแนนข้อมูลยังไม่พอ ({g['n']}/{g['min_n']} ไม้)"}[g["status"]],
                       {"pass": "ok", "fail": "bad", "data": "off"}[g["status"]]))
     neg_band = ""
-    if g and g.get("n", 0) >= 20 and g.get("profit", 0.0) <= -2.0 and not skip:   # ใช้ตัดสินตอนแทงจริง: ช่วงคะแนนติดลบ -> ข้าม (ไม่ต้องสวน)
-        neg_band = (f'<div class="s-negband" role="note"><b>ช่วงคะแนนติดลบ → แนะนำข้าม</b>'
+    nbs = (g or {}).get("nb_status") or {}
+    if g and g.get("n", 0) >= 20 and g.get("profit", 0.0) <= -2.0 and not skip and nbs.get("status") != "fail":
+        # ป้ายอยู่ระหว่างทดสอบจนครบ NEGBAND_TEST_N ไม้ (ครบแล้วไม่ช่วย = เลิกแสดง)
+        if nbs.get("status") == "pass":
+            ttl, tst = "ช่วงคะแนนติดลบ → แนะนำข้าม", ""
+        else:
+            ttl = "ช่วงคะแนนติดลบ → พิจารณาข้าม (กำลังทดสอบ)"
+            tst = (f' · ป้ายนี้ทดสอบไปแล้ว {nbs.get("n", 0)}/{nbs.get("need", 120)} ไม้ ข้ามตามป้ายประหยัดได้ {nbs.get("saved", 0):+.2f} หน่วย'
+                   f' (z {nbs.get("z", 0):+.2f} ยังแยกจากโชคไม่ได้)') if nbs else " · ป้ายนี้ยังอยู่ระหว่างทดสอบ"
+        neg_band = (f'<div class="s-negband" role="note"><b>{ttl}</b>'
                     f'<span>{e(g["kind_th"])} คะแนน {e(g["label"])} ที่ผ่านมา {g["w"]}-{g["l"]} {g["profit"]:+.2f} จาก {g["n"]} ไม้ · '
-                    f'ไม่ต้องแทงสวน (ทดสอบแล้วการสวนไม่ได้ผลดีกว่าการข้าม)</span></div>')
+                    f'ไม่ต้องแทงสวน{e(tst)}</span></div>')
     sup, opp = pick.get("support"), pick.get("oppose")
     stats = (f'<div class="s-statline"><div class="v">{num(pick["strength"], 2)}</div><div class="t">คะแนนสัญญาณ</div></div>')
     if sup is not None and opp is not None:
@@ -857,10 +863,11 @@ def stats_story(state, history, params):
               f'<div class="d">z = {cs["z"]:+.2f}</div></div></div>'
               f'<div class="s-note">{e(verdict)} · CLV ใช้เวลาพิสูจน์ฝีมือเร็วกว่าดูผลแพ้ชนะมาก เพราะไม่ขึ้นกับดวงของสกอร์'
               f'{(" · ไม่นับ " + str(cs["suspect"]) + " ไม้ที่ราคาปิดน่าจะอ่านผิด") if cs.get("suspect") else ""}</div></div>')
-    nb = q.negband_track(history)
+    nb = q.negband_status(history)
     if nb["n"]:
-        nb_v = ("การข้ามช่วยได้จริง" if nb["z"] <= -2 else "การข้ามทำให้พลาดไม้ดี · ควรเอาป้ายออก" if nb["z"] >= 2 else
-                ("ยังน้อยเกินสรุป · ควรมี 60–80 ไม้" if nb["n"] < 60 else "ยังแยกจากความบังเอิญไม่ได้"))
+        nb_v = {"pass": "ผ่าน: การข้ามช่วยได้จริง · ป้ายแสดงเป็นคำแนะนำเต็ม",
+                "fail": f"ไม่ผ่าน: ครบ {nb['need']} ไม้แล้วการข้ามไม่ได้ช่วยชัดเจน · เลิกแสดงป้ายบนการ์ดแล้ว",
+                "testing": f"กำลังทดสอบ {nb['n']}/{nb['need']} ไม้ · ผ่านเมื่อครบแล้ว z ≤ −2 (ป้ายแสดงเป็น “พิจารณาข้าม”)"}[nb["status"]]
         k += (f'<div class="s-card s-rv" style="margin-top:12px"><div class="s-h"><span>ติดตามป้าย “ช่วงคะแนนติดลบ → แนะนำข้าม”</span>'
               f'{chip(str(nb["n"]) + " ไม้", "acc")}</div><div class="s-kpis">'
               f'<div class="s-kpi"><div class="t">ผลของไม้ที่ขึ้นป้าย</div><div class="v">{nb["w"]}-{nb["l"]}</div>'
