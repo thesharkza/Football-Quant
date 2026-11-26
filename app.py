@@ -950,6 +950,39 @@ with tab3:
                 store.save()
                 st.success("อนุมัติแล้ว: " + ", ".join(sel_))
                 cloud_warn()
+        # ---- เฝ้าดู Rule หลัก: เสนอพักเมื่อครบ 150 ครั้งและ z ≤ −2.5 (ไม่พักเอง ต้องอนุมัติ) ----
+        st.markdown("**เฝ้าดู Rule หลัก**")
+        bw_ = q.base_rule_watch(store.history, store.params)
+        susp_ = list(store.params.get("suspended_base") or [])
+        flag_ = [x for x in bw_ if x["propose"] or x["propose_back"] or x["suspended"]]
+        show_ = flag_ + [x for x in bw_ if x not in flag_][:max(0, 6 - len(flag_))]
+        st.markdown(html_table(["Rule", "ชื่อ", "ครั้ง", "ผล", "กำไรถ้าแทงตาม", "z (เทียบแทงสุ่ม)", "สถานะ"],
+                               [[x["rule"], q.RULE_NAMES.get(x["rule"], ""), x["n"], f"{x['w']}-{x['l']}", f"{x['profit']:+.2f}",
+                                 f"{x['z']:+.2f}",
+                                 ("พักอยู่" + (" · ผลกลับมาบวก เสนอเปิดคืน" if x["propose_back"] else "")) if x["suspended"] else
+                                 "เสนอพัก" if x["propose"] else
+                                 (f"เฝ้าดู ({x['n']}/{q.BASE_WATCH_N})" if x["n"] < q.BASE_WATCH_N else "ใช้งานปกติ")] for x in show_]),
+                    unsafe_allow_html=True)
+        st.caption(f"แสดง Rule หลักที่ผลแย่ที่สุด {len(show_)} ข้อ · เสนอพักเมื่อครบ {q.BASE_WATCH_N} ครั้งและ z ≤ {q.BASE_WATCH_Z} เท่านั้น "
+                   "(ทดสอบย้อนหลังแล้ว การพักเร็วกว่านี้ทำให้ผลแย่ลง เพราะ Rule หลายสิบข้อย่อมมีบางข้อโชคร้าย) · "
+                   "Rule ที่พักยังคำนวณเก็บไว้ทุกนัด แต่ไม่นับคะแนนตอนฟันธง")
+        cand_ = [x["rule"] for x in bw_ if x["propose"] or x["suspended"]]
+        if cand_:
+            sel_b = st.multiselect("Rule หลักที่พักไว้ (เลือก = พัก · เอาออก = เปิดคืน)", sorted(set(cand_)), default=[r for r in susp_ if r in cand_],
+                                   key="cfg_susp", format_func=lambda k: f"{k} {q.RULE_NAMES.get(k, '')}")
+            ok_b = st.checkbox("ยืนยันการเปลี่ยน Rule หลักที่พัก (มีผลต่อการฟันธงนัดถัดไป)", key="cfg_susp_ok")
+            if st.button("บันทึก Rule หลักที่พัก", disabled=not ok_b, key="cfg_susp_go"):
+                store.state["params"]["suspended_base"] = sorted(sel_b)
+                store.save()
+                st.success("บันทึกแล้ว: " + (", ".join(sel_b) if sel_b else "ไม่มี Rule หลักที่พัก"))
+                cloud_warn()
+        ws_ = q.weakskip_study(store.history)
+        st.markdown("**ศึกษา: การข้ามเพราะสัญญาณอ่อน**")
+        st.caption(f"ไม้ที่ข้ามเพราะสัญญาณอ่อน {ws_['n']} ไม้ ถ้าแทงไปจะได้ {ws_['w']}-{ws_['l']} {ws_['profit']:+.2f} หน่วย "
+                   f"(คนแทงสุ่มคาดได้ {ws_['expected']:+.2f}) · z = {ws_['z']:+.2f} · "
+                   + {"testing": f"กำลังศึกษา {ws_['n']}/{ws_['need']} ไม้ · ยังข้ามตามเดิม",
+                      "keep": "ครบแล้ว การข้ามไม่ได้ทำให้พลาดไม้ดีอย่างมีนัยสำคัญ · ข้ามต่อไป",
+                      "propose_off": f"ผ่านเกณฑ์ (z ≥ {ws_['z_need']:g}) · เสนอให้ลดเกณฑ์ “ข้ามเมื่อคะแนนต่ำกว่า” หรือปิดการข้ามสัญญาณอ่อน"}[ws_["status"]])
         sw_ = store.state.get("shadow_weights")
         if sw_:
             live = store.state["weights"]
