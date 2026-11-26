@@ -191,7 +191,9 @@ def _hero(m, f, pick, res=None):
     def team(side):
         x = fm.get(side) or {}
         rk = f.get("rank_home") if side == "home" else f.get("rank_away")
-        sub = ("เจ้าบ้าน" if side == "home" else "ทีมเยือน") + (f" · อันดับ {rk:g}" if isinstance(rk, (int, float)) else "")
+        rr = (f.get("rank_raw") or {}).get(side) if f.get("rank_off") else None
+        sub = ("เจ้าบ้าน" if side == "home" else "ทีมเยือน") + (f" · อันดับ {rk:g}" if isinstance(rk, (int, float)) else
+                                                               f" · อันดับ {rr:g} (ไม่ใช้)" if isinstance(rr, (int, float)) else "")
         fav = chip("ทีมต่อ", "acc") if f["fav"] == side else chip("ทีมรอง", "off")
         return (f'<div class="s-team"><div class="s-chips" style="justify-content:center">{fav}</div>'
                 f'<div class="nm">{e(f[side])}</div><div class="sub">{e(sub)}</div>{S.dots(x.get("seq"))}</div>')
@@ -592,6 +594,9 @@ def _ch_form(m, f):
         rk = f.get("rank_home") if side == "home" else f.get("rank_away")
         if isinstance(rk, (int, float)):
             rows += f'<div class="s-kv"><span>อันดับ</span><b>{rk:g}{(" / " + str(f["league_size"])) if f.get("league_size") else ""}</b></div>'
+        elif f.get("rank_off") and isinstance((f.get("rank_raw") or {}).get(side), (int, float)):
+            rows += (f'<div class="s-kv"><span>อันดับ (ไม่นำมาวิเคราะห์ · {e(f["rank_off"])})</span>'
+                     f'<b class="s-mut">{f["rank_raw"][side]:g}</b></div>')
         if st.get("venue"):
             gf, ga = (st.get("home_gf"), st.get("home_ga")) if side == "home" else (st.get("away_gf"), st.get("away_ga"))
             if gf is not None and ga is not None:
