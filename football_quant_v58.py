@@ -85,7 +85,8 @@ DEFAULT_PARAMS = {
     "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
     "judge_max_n": 150,          # Rule ที่ผลยังเป็นบวกแต่ไม่ชัดตอนครบ judge_n -> ติดตามต่อจนครบเท่านี้ก่อนถอด
     "revive_rules": ["R49", "R61"],   # Rule ที่ถูกถอดตอนครบ 70 ทั้งที่ผลเป็นบวก -> เปิดติดตามต่อ (25 พ.ย. 2026)
-    "suspended_base": [],              # Rule หลักที่ผู้ใช้อนุมัติให้พัก (ยังติดตามผล แต่ไม่นับคะแนน)
+    "suspended_base": [],
+    "cup_rank_off_all": False,         # True = ตัดอันดับในบอลถ้วยทุกรอบ รวมรอบแบ่งกลุ่ม/ลีกเฟส (ค่าเริ่ม: ตัดเฉพาะน็อกเอาต์/ถ้วยในประเทศ/กระชับมิตร)              # Rule หลักที่ผู้ใช้อนุมัติให้พัก (ยังติดตามผล แต่ไม่นับคะแนน)
     "breakeven_wr": 0.525,       # จุดคุ้มทุนอัตราชนะ (ค่าน้ำเฉลี่ย ~0.90)
     "team_news_enabled": False,
     "risk_bankroll": 0.0,        # ทุน (บาท) · 0 = ไม่ตั้ง
@@ -241,6 +242,30 @@ def split_line(x):
 # ----------------------------------------------------------------------------
 # 2) สกัด Feature จากข้อมูลแมตช์ (Step 1: Data Extraction & Context)
 # ----------------------------------------------------------------------------
+_CUP_RE = re.compile(r"\bcup\b|copa|pokal|coupe|coppa|ta[cç]a|beker|trophy|champions league|europa|conference league|"
+                     r"libertadores|sudamericana|\bafc\b|\bcaf\b|concacaf|nations league|ถ้วย|super ?cup|shield|"
+                     r"friendl|กระชับมิตร", re.I)
+_SAME_TABLE_RE = re.compile(r"group|กลุ่ม|league phase|league round|league stage|\bleague [a-d]\b", re.I)
+
+
+def cup_rank_off(m, f, P):
+    """คืนเหตุผล (str) ถ้าไม่ควรใช้อันดับตารางในนัดนี้ หรือ "" ถ้าใช้ได้
+    - บอลถ้วยรอบน็อกเอาต์ / ถ้วยในประเทศ / กระชับมิตร: อันดับมาจากคนละลีก เทียบกันไม่ได้ -> ไม่ใช้
+    - บอลถ้วยรอบแบ่งกลุ่ม/ลีกเฟส (สองทีมอยู่ตารางเดียวกัน): ใช้ได้ เว้นแต่ตั้งค่า cup_rank_off_all"""
+    lg = str(m.get("league") or "")
+    tn_cup = (((m.get("team_news") or {}).get("cup")) or {}).get("is_cup") is True
+    is_cup = f.get("ctx_type") == "cup" or f.get("cup_group") or f.get("continental") or f.get("asian_cup") \
+        or tn_cup or bool(_CUP_RE.search(lg))
+    if not is_cup:
+        return ""
+    if re.search(r"friendl|กระชับมิตร", lg, re.I):
+        return "เกมกระชับมิตร"
+    same_table = (f.get("cup_group") or bool(_SAME_TABLE_RE.search(lg))) and not f.get("knockout")
+    if same_table and not P.get("cup_rank_off_all"):
+        return ""
+    return "บอลถ้วย" + (" (รอบแบ่งกลุ่ม)" if same_table else "")
+
+
 def build_features(m, P):
     ctx = m.get("context", {}) or {}
     st = m.get("stats", {}) or {}
@@ -367,6 +392,12 @@ def build_features(m, P):
     f["rank_gap"] = (f["rank_fav"] - f["rank_dog"]) if (f["rank_fav"] is not None and f["rank_dog"] is not None) else None
     ls = m.get("league_size")
     f["league_size"] = ls if _num(ls) and ls > 0 else None
+    # บอลถ้วย: อันดับในรูปมักเป็นอันดับลีกในประเทศ (คนละลีก/คนละระดับ) เทียบกันไม่ได้ -> ไม่นำอันดับมาวิเคราะห์
+    f["rank_off"] = cup_rank_off(m, f, P)
+    if f["rank_off"]:
+        f["rank_raw"] = {"home": f["rank_home"], "away": f["rank_away"], "size": f["league_size"]}
+        f["rank_home"] = f["rank_away"] = f["rank_fav"] = f["rank_dog"] = f["rank_gap"] = None
+        f["league_size"] = None
     f["home_gf"], f["home_ga"] = g("home_gf"), g("home_ga")
 
     def _wr(side):
@@ -2453,6 +2484,8 @@ def render_report(m, f, contribs, pick, store):
         L.append(f"    • เรต OU เปิด {f['ou_o']:g} -> ปัจจุบัน {f['ou_c']:g}"
                  + (f"  | ประตูรวมคาดการณ์จากสถิติ {f['exp_total']:.2f}" if f["exp_total"] else ""))
     L.append("  [4] สถิติ & บริบท")
+    if f.get("rank_off") and (f.get("rank_raw") or {}).get("home") is not None:
+        L.append(f"    • อันดับตาราง: ไม่นำมาวิเคราะห์ ({f['rank_off']} · อันดับมาจากคนละตาราง เทียบกันไม่ได้)")
     if f["rank_home"] is not None or f["rank_away"] is not None:
         L.append(f"    • อันดับตาราง: {f['home']} {f['rank_home'] if f['rank_home'] is not None else '-'} | {f['away']} {f['rank_away'] if f['rank_away'] is not None else '-'}"
                  + (f" (จาก {f['league_size']:g} ทีม)" if f["league_size"] else ""))
