@@ -473,7 +473,7 @@ def job_watch(jid):
         st.rerun()
 
 
-_F_DEFAULTS = {"rank_home": None, "rank_away": None, "league_size": None, "verify": [], "verify_fail": False,
+_F_DEFAULTS = {"rank_off": "", "rank_home": None, "rank_away": None, "league_size": None, "verify": [], "verify_fail": False,
                "fav_drop_adj": 0.0, "dog_drop_adj": 0.0, "value_ratio": None, "conflict": 0.0, "x12_pp": 0.0,
                "hdp_shift_fav": 0.0, "has_ou": False, "form": None}
 
@@ -909,6 +909,9 @@ with tab3:
         n_gmin = g2_.number_input("ตัดสินเมื่อช่วงนั้นมีอย่างน้อย (ไม้)", 5, 200, int(P0.get("gate_min_n", 20)), key="cfg_gmin")
         n_tn = st.toggle("ค้นข่าวทีม (xG/ตัวเจ็บ/วันพัก) ทุกการวิเคราะห์ · ใช้โควตา Gemini เพิ่มราว 1 เท่า และยังไม่มีผลต่อการฟันธง",
                          value=bool(P0.get("team_news_enabled", False)), key="cfg_tn")
+        n_cupr = st.toggle("บอลถ้วยรอบแบ่งกลุ่ม/ลีกเฟส: ไม่ใช้อันดับตารางด้วย (ปิด = ใช้ได้ เพราะสองทีมอยู่ตารางเดียวกัน · "
+                           "น็อกเอาต์/ถ้วยในประเทศ/กระชับมิตร ไม่ใช้อันดับเสมอ)",
+                           value=bool(P0.get("cup_rank_off_all", False)), key="cfg_cupr")
         n_lock = st.toggle("ล็อกสถานะ Rule: ไม่เปิดใช้ Rule ใหม่อัตโนมัติ (Rule ที่ผ่านเกณฑ์จะติดป้าย “พร้อมใช้” แต่ยังไม่มีผลต่อการฟันธง)",
                            value=bool(P0.get("lock_unlocks", True)), key="cfg_lock")
         if st.button("บันทึกการตั้งค่า", key="cfg_save"):
@@ -916,7 +919,7 @@ with tab3:
                                                          "skip_min_strength": float(n_min), "skip_conflict": float(n_cf),
                                                          "skip_move_only": n_mv, "skip_verify_fail": n_vf, "lock_unlocks": n_lock,
                                                          "gate_enabled": n_gate, "gate_min_n": int(n_gmin),
-                                                         "team_news_enabled": n_tn})
+                                                         "team_news_enabled": n_tn, "cup_rank_off_all": n_cupr})
             if n_frz:
                 q.weight_key(store)                # สร้างน้ำหนักเงาจากน้ำหนักปัจจุบัน
             store.save()
