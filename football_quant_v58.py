@@ -3227,10 +3227,65 @@ def consolidate_books(m):
     return w
 
 
+SANITY_MIN_OK = 3        # ตัดแถวที่ผิดรูปของเจ้าเดียวทิ้ง (แทนการนับเป็นร้ายแรง) เมื่อเจ้าอื่นที่ปกติในตลาด/ช่วงเวลาเดียวกันเหลือ ≥ ค่านี้
+
+
+def _row_problem(b, key, t):
+    """ปัญหาระดับ "แถว" ของเจ้าหนึ่ง (ตลาด key ช่วง t) ที่บ่งว่าอ่านแถวนั้นผิด คืนข้อความ หรือ None"""
+    nm = b.get("name", "?")
+    tn = "เปิด" if t == "open" else "ปัจจุบัน"
+    r = (b.get(key) or {}).get(t) if isinstance(b.get(key), dict) else None
+    if key == "x12" and isinstance(r, list) and len(r) == 3 and all(_num(v) and v > 1 for v in r):
+        ovr = sum(1 / v for v in r)
+        if ovr < 0.98 or ovr > 1.20:
+            return f"{nm} 1X2 {tn}: ผลรวมโอกาส {ovr:.0%} ผิดปกติ (ปกติ 100-115%) อาจอ่านราคาผิด/สลับคอลัมน์"
+    if key == "hdp" and isinstance(r, dict) and all(_num(r.get(k)) for k in ("line", "home_water", "away_water")):
+        hw, aw = r["home_water"], r["away_water"]
+        sm = (hw - 1 if hw > 1.5 else hw) + (aw - 1 if aw > 1.5 else aw)
+        if sm < 1.6 or sm > 2.2:
+            return f"{nm} แฮนดิแคป {tn}: ค่าน้ำรวม {sm:.2f} ผิดปกติ (ปกติ ~1.80-2.05)"
+    if key == "ou" and isinstance(r, dict) and all(_num(r.get(k)) for k in ("line", "over", "under")):
+        ov, un = r["over"], r["under"]
+        sm = (ov - 1 if ov > 1.5 else ov) + (un - 1 if un > 1.5 else un)
+        if not 1.6 <= sm <= 2.2:
+            return f"{nm} สูง/ต่ำ {tn}: ค่าน้ำรวม {sm:.2f} ผิดปกติ"
+        if not 0.5 <= r["line"] <= 7.5 or abs(r["line"] * 4 - round(r["line"] * 4)) > 1e-6:
+            return f"{nm} สูง/ต่ำ {tn}: เรต {r['line']} ไม่ใช่เรตที่เป็นไปได้"
+    return None
+
+
+def _row_valid(b, key, t):
+    r = (b.get(key) or {}).get(t) if isinstance(b.get(key), dict) else None
+    if key == "x12":
+        return isinstance(r, list) and len(r) == 3 and all(_num(v) and v > 1 for v in r)
+    ks = ("line", "home_water", "away_water") if key == "hdp" else ("line", "over", "under")
+    return isinstance(r, dict) and all(_num(r.get(k)) for k in ks)
+
+
+def drop_bad_rows(m):
+    """แถวที่อ่านผิดของเจ้าเดียว: ถ้าเจ้าอื่นที่ปกติในตลาด/ช่วงเดียวกันเหลือ ≥ SANITY_MIN_OK ให้ตัดแถวนั้นทิ้ง (ไม่ใช้คำนวณ)
+    คืนรายการคำเตือน (ข้อความมีคำว่า "ผิดปกติ" -> แสดงเป็นสีแดง)"""
+    books = [b for b in (m.get("books") or []) if isinstance(b, dict)]
+    if len(books) < SANITY_MIN_OK + 1:
+        return []
+    out = []
+    for key in ("x12", "hdp", "ou"):
+        for t in ("open", "current"):
+            bad = [(b, _row_problem(b, key, t)) for b in books]
+            bad = [(b, msg) for b, msg in bad if msg]
+            n_ok = sum(1 for b in books if _row_valid(b, key, t) and not _row_problem(b, key, t))
+            if bad and n_ok >= SANITY_MIN_OK:
+                for b, msg in bad:
+                    b[key] = dict(b[key]) if isinstance(b.get(key), dict) else {}
+                    b[key][t] = None
+                    out.append(f"ตัดแถวออก: {msg} -> ไม่ใช้คำนวณ (เจ้าอื่นปกติ {n_ok} เจ้า)")
+    return out
+
+
 def sanity_checks(m):
     """ตรวจความสมเหตุสมผลของราคาที่อ่านจากรูป คืน (คำเตือน, ข้อผิดพลาดร้ายแรง)
     ร้ายแรง = มีแนวโน้มอ่านรูปผิด (เช่น เครื่องหมายเรตกลับด้าน, ค่าน้ำ/ราคาผิดรูป) -> ควรตรวจก่อนวิเคราะห์"""
-    warn, crit = [], []
+    warn, crit = drop_bad_rows(m), []
     books = [b for b in (m.get("books") or []) if isinstance(b, dict)] or [{"name": "ราคารวม", "x12": m.get("x12"), "hdp": m.get("hdp"), "ou": m.get("ou")}]
     flips = []
     for b in books:
