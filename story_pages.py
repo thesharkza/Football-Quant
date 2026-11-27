@@ -83,9 +83,9 @@ def _risk_items(f, contribs, pick):
     bm = base_of(pick["market"])
     om = PAIR.get(bm)
     opp = sorted([c for c in contribs if om and c["market"] == om], key=lambda c: -c["eff"])[:2]
-    risk = [f'Rule ค้าน: {q.RULE_NAMES.get(c["rule"], c["rule"])} ({c["eff"]:+.2f}) — {c.get("note", "")}' for c in opp]
+    risk = [f'มี Rule ที่ชี้อีกฝั่ง: {q.RULE_NAMES.get(c["rule"], c["rule"])} ({c["eff"]:+.2f}) — {c.get("note", "")}' for c in opp]
     if pick.get("move_only"):
-        risk.append("สัญญาณมาจากการไหลของราคาล้วน ไม่มีราคาปัจจุบัน/บริบทหนุน (ระบบลดคะแนนเหลือ 60%)")
+        risk.append("ไม้นี้มาจากราคาที่ขยับอย่างเดียว ไม่มีอย่างอื่นช่วยยืนยัน (ระบบเลยลดคะแนนเหลือ 60%)")
     risk += [x for x in (pick.get("skip_reasons") or []) if "ผิดปกติร้ายแรง" not in x]
     return risk
 
@@ -115,17 +115,21 @@ def alerts(res):
     b = pick.get("best")
     rw = [w for w in warns if warn_level(w) == "red"]
     if b and any(_same_book(b["book"], _warn_book(w)) for w in rw):
-        red.append(f'เจ้าที่ให้ราคาดีที่สุด ({b["book"]}) มีค่าผิดปกติจากการอ่านรูป — เทียบราคากับหน้าเว็บอีกครั้งก่อนแทง')
+        red.append(f'ราคาดีสุดจาก {b["book"]} อาจอ่านรูปผิด — เช็คราคาบนเว็บอีกทีก่อนแทง')
     if pick.get("verify_fail"):
-        red.append("ตรวจเหย้า/เยือนไม่ผ่าน — อาจสลับทีม ควรตรวจรูปอีกครั้ง")
+        red.append("เหย้า/เยือนอาจสลับกัน — เช็ครูปอีกที")
     red += sorted(rw, key=lambda w: not w.startswith("ร้ายแรง"))
+    for gd in pick.get("guards") or []:                # เกาะป้องกันจากการวิเคราะห์ไม้ที่แพ้
+        t_ = (f'เกาะป้องกัน {gd["id"]}: {gd["name"]} — ที่ผ่านมา {gd["w"]}-{gd["l"]} {gd["profit"]:+.2f} หน่วย'
+              f' · {gd["why"]}')
+        (red if gd.get("level") == "red" else yel).insert(0, t_)
     yel += _risk_items(f, res.get("contribs") or [], pick)
     rs = m.get("research") or {}
     yel += _disc_alerts(f, rs.get("discipline"))
     if rs.get("confidence") == "low":
-        yel.append("บริบทที่ค้นได้มีความน่าเชื่อถือต่ำ")
+        yel.append("ข้อมูลบริบทที่หามาได้ไม่ค่อยน่าเชื่อ")
     if res.get("research_err"):
-        yel.append("ค้นหาบริบทอัตโนมัติไม่สำเร็จ (ใช้ค่าตั้งต้นแทน)")
+        yel.append("หาข้อมูลบริบทไม่สำเร็จ (ใช้ค่าปกติแทน)")
     yel += [w for w in warns if warn_level(w) == "yel"]
     return red, yel
 
@@ -136,10 +140,10 @@ def _alert_box(red, yel, top=3):
     def blk(items, cls, title):
         if not items:
             return ""
-        li = "".join(f'<li class="{"b" if x.startswith("ร้ายแรง") or x.startswith("เจ้าที่ให้ราคา") else ""}">{e(x)}</li>' for x in items[:top])
-        more = f'<li class="more">+ อีก {len(items) - top} ข้อ (ดูบทตรวจสอบ/สรุป)</li>' if len(items) > top else ""
+        li = "".join(f'<li class="{"b" if x.startswith(("ร้ายแรง", "เจ้าที่ให้ราคา", "เกาะป้องกัน")) else ""}">{e(x)}</li>' for x in items[:top])
+        more = f'<li class="more">+ อีก {len(items) - top} ข้อ (ดูต่อในบทตรวจสอบ/สรุป)</li>' if len(items) > top else ""
         return f'<div class="s-al {cls}"><div class="h">{title} ({len(items)})</div><ul>{li}{more}</ul></div>'
-    return ('<div class="s-alerts">' + blk(red, "red", "ราคา/ข้อมูลผิดปกติ") + blk(yel, "yel", "สิ่งที่ต้องระวัง") + "</div>")
+    return ('<div class="s-alerts">' + blk(red, "red", "ระวังมาก: ข้อมูลแปลก / เสี่ยงสูง") + blk(yel, "yel", "ควรระวัง") + "</div>")
 
 
 def _disc_html(f, d):
@@ -175,12 +179,12 @@ def _disc_alerts(f, d):
         return out
     ry, rr = d.get("referee_yellow_pg"), d.get("referee_red_pg")
     if (ry is not None and ry >= 5.0) or (rr is not None and rr >= 0.25):
-        out.append("ผู้ตัดสินเข้มงวด (" + " · ".join(x for x in (f"เหลือง {ry:.1f}/นัด" if ry is not None else "",
+        out.append("กรรมการนัดนี้แจกใบบ่อย (" + " · ".join(x for x in (f"เหลือง {ry:.1f}/นัด" if ry is not None else "",
                                                              f"แดง {rr:.2f}/นัด" if rr is not None else "") if x)
-                   + ") เกมอาจพลิกจากใบแดง/จุดโทษ")
+                   + ") เกมอาจพลิกเพราะใบแดง/จุดโทษ")
     for side, k in (("home", "suspended_home"), ("away", "suspended_away")):
         if d.get(k):
-            out.append(f"{f[side]} มีผู้เล่นติดโทษแบน {len(d[k])} คน: " + ", ".join(d[k][:3]))
+            out.append(f"{f[side]} มีคนติดแบน {len(d[k])} คน: " + ", ".join(d[k][:3]))
     return out
 
 
@@ -222,14 +226,14 @@ def _hero(m, f, pick, res=None):
     if g and g.get("n", 0) >= 20 and g.get("profit", 0.0) <= -2.0 and not skip and nbs.get("status") != "fail":
         # ป้ายอยู่ระหว่างทดสอบจนครบ NEGBAND_TEST_N ไม้ (ครบแล้วไม่ช่วย = เลิกแสดง)
         if nbs.get("status") == "pass":
-            ttl, tst = "ช่วงคะแนนติดลบ → แนะนำข้าม", ""
+            ttl, tst = "ช่วงคะแนนนี้ขาดทุนมาตลอด → แนะนำข้าม", ""
         else:
-            ttl = "ช่วงคะแนนติดลบ → พิจารณาข้าม (กำลังทดสอบ)"
-            tst = (f' · ป้ายนี้ทดสอบไปแล้ว {nbs.get("n", 0)}/{nbs.get("need", 120)} ไม้ ข้ามตามป้ายประหยัดได้ {nbs.get("saved", 0):+.2f} หน่วย'
-                   f' (z {nbs.get("z", 0):+.2f} ยังแยกจากโชคไม่ได้)') if nbs else " · ป้ายนี้ยังอยู่ระหว่างทดสอบ"
+            ttl = "ช่วงคะแนนนี้ขาดทุนมาตลอด → ลองข้ามไม้นี้ดู (ป้ายนี้ยังทดลองอยู่)"
+            tst = (f' · ทดลองป้ายนี้มาแล้ว {nbs.get("n", 0)}/{nbs.get("need", 120)} ไม้ ถ้าข้ามตามป้ายจะเซฟได้ {nbs.get("saved", 0):+.2f} หน่วย'
+                   f' แต่ยังบอกไม่ได้ว่าช่วยจริงหรือแค่ดวง') if nbs else " · ป้ายนี้ยังทดลองอยู่"
         neg_band = (f'<div class="s-negband" role="note"><b>{ttl}</b>'
                     f'<span>{e(g["kind_th"])} คะแนน {e(g["label"])} ที่ผ่านมา {g["w"]}-{g["l"]} {g["profit"]:+.2f} จาก {g["n"]} ไม้ · '
-                    f'ไม่ต้องแทงสวน{e(tst)}</span></div>')
+                    f'ไม่ต้องแทงฝั่งตรงข้าม{e(tst)}</span></div>')
     sup, opp = pick.get("support"), pick.get("oppose")
     stats = (f'<div class="s-statline"><div class="v">{num(pick["strength"], 2)}</div><div class="t">คะแนนสัญญาณ</div></div>')
     if sup is not None and opp is not None:
@@ -254,7 +258,7 @@ def _hero(m, f, pick, res=None):
             _hf = lambda d: f' (ได้ครึ่ง {d["half_win"]:.0%})' if d["half_win"] >= .005 else ""
             extra += (f'<div class="sc">โอกาสได้แฮนดิแคป (รวมทุกสกอร์): <b>{e(f["home"])} {hh["get"]:.0%}</b>{_hf(hh)} · '
                       f'<b>{e(f["away"])} {aa["get"]:.0%}</b>{_hf(aa)}' + (f' · คืนทุน {hh["push"]:.0%}' if hh["push"] >= .005 else "") + "</div>")
-        extra += (f'<div class="sc">ประตูคาดหมาย {sm["lh"]:.2f} – {sm["la"]:.2f} · สกอร์ที่น่าจะเป็น '
+        extra += (f'<div class="sc">คาดว่าเหย้ายิง {sm["lh"]:.2f} เยือนยิง {sm["la"]:.2f} ลูก · สกอร์ที่น่าจะเป็น '
                   + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:3]) + "</div>")
     pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"ข้ามไม้นี้ · ติดตามเป็นไม้เงา" if skip else "สัญญาณฟันธงเดี่ยว · ราคาปัจจุบัน"}</div>'
           f'<div class="lb">{e(pick["label"])}</div>'
@@ -855,13 +859,13 @@ def stats_story(state, history, params):
          f'<div class="s-kpi s-rv" style="--dl:.32s"><div class="t">รอผล</div><div class="v">{num(len(pend), 0)}</div><div class="d">สัญญาณที่ยังไม่จบเกม</div></div></div>')
     cs = q.clv_summary(history)
     if cs["n"]:
-        verdict = ("ราคาที่ได้ดีกว่าราคาปิดอย่างมีนัยสำคัญ: หลักฐานว่าระบบมีฝีมือ" if cs["z"] >= 2 else
-                   "ราคาที่ได้แย่กว่าราคาปิดอย่างมีนัยสำคัญ: ระบบแทงช้ากว่าตลาดหรือเลือกฝั่งผิด" if cs["z"] <= -2 else
-                   ("ยังน้อยเกินสรุป · ควรมีอย่างน้อย 100 ไม้" if cs["n"] < 100 else "ยังแยกจากความบังเอิญไม่ได้"))
+        verdict = ("ราคาที่ได้ดีกว่าราคาปิดแบบชัดเจน (ไม่ใช่แค่ดวง): หลักฐานว่าระบบมีฝีมือ" if cs["z"] >= 2 else
+                   "ราคาที่ได้แย่กว่าราคาปิดแบบชัดเจน (ไม่ใช่แค่ดวง): ระบบแทงช้ากว่าตลาดหรือเลือกฝั่งผิด" if cs["z"] <= -2 else
+                   ("ยังน้อยเกินสรุป · ควรมีอย่างน้อย 100 ไม้" if cs["n"] < 100 else "ยังบอกไม่ได้ว่าเก่งจริงหรือแค่ดวง"))
         k += (f'<div class="s-card s-rv" style="margin-top:12px"><div class="s-h"><span>CLV · เทียบราคาที่แทงกับราคาปิดก่อนเตะ</span>'
               f'{chip(str(cs["n"]) + " ไม้", "acc")}</div><div class="s-kpis">'
               f'<div class="s-kpi"><div class="t">CLV เฉลี่ย (ราคากลาง)</div><div class="v {"s-up" if cs["mean"] >= 0 else "s-down"}">{num(cs["mean"] * 100, 2, sign=True, suf="%")}</div>'
-              f'<div class="d">ผลตอบแทนคาดหมายต่อไม้ ถ้าราคาปิดคือราคายุติธรรม</div></div>'
+              f'<div class="d">ถ้าราคาก่อนเตะคือราคาที่ถูกต้อง แต่ละไม้เราได้เปรียบ/เสียเปรียบเท่านี้</div></div>'
               f'<div class="s-kpi"><div class="t">CLV เฉลี่ย (ราคาดีสุด)</div><div class="v {"s-up" if cs["mean_best"] >= 0 else "s-down"}">{num(cs["mean_best"] * 100, 2, sign=True, suf="%")}</div>'
               f'<div class="d">ถ้าแทงที่เจ้าที่ให้ราคาดีที่สุด</div></div>'
               f'<div class="s-kpi"><div class="t">ไม้ที่ CLV เป็นบวก (ราคาที่แทง)</div><div class="v">{num(cs["pos"] * 100, 0, suf="%")}</div>'
@@ -870,13 +874,13 @@ def stats_story(state, history, params):
               f'{(" · ไม่นับ " + str(cs["suspect"]) + " ไม้ที่ราคาปิดน่าจะอ่านผิด") if cs.get("suspect") else ""}</div></div>')
     nb = q.negband_status(history)
     if nb["n"]:
-        nb_v = {"pass": "ผ่าน: การข้ามช่วยได้จริง · ป้ายแสดงเป็นคำแนะนำเต็ม",
-                "fail": f"ไม่ผ่าน: ครบ {nb['need']} ไม้แล้วการข้ามไม่ได้ช่วยชัดเจน · เลิกแสดงป้ายบนการ์ดแล้ว",
-                "testing": f"กำลังทดสอบ {nb['n']}/{nb['need']} ไม้ · ผ่านเมื่อครบแล้ว z ≤ −2 (ป้ายแสดงเป็น “พิจารณาข้าม”)"}[nb["status"]]
+        nb_v = {"pass": "ผ่าน: ข้ามตามป้ายช่วยได้จริง · ป้ายเป็นคำแนะนำเต็มตัวแล้ว",
+                "fail": f"ไม่ผ่าน: ครบ {nb['need']} ไม้แล้ว ข้ามไปก็ไม่ได้ช่วยชัดๆ · เลิกขึ้นป้ายแล้ว",
+                "testing": f"ยังทดลองอยู่ {nb['n']}/{nb['need']} ไม้ · ครบแล้วถ้าช่วยชัดๆ (z ≤ −2) จะเปลี่ยนเป็นแนะนำข้ามเต็มตัว"}[nb["status"]]
         k += (f'<div class="s-card s-rv" style="margin-top:12px"><div class="s-h"><span>ติดตามป้าย “ช่วงคะแนนติดลบ → แนะนำข้าม”</span>'
               f'{chip(str(nb["n"]) + " ไม้", "acc")}</div><div class="s-kpis">'
               f'<div class="s-kpi"><div class="t">ผลของไม้ที่ขึ้นป้าย</div><div class="v">{nb["w"]}-{nb["l"]}</div>'
-              f'<div class="d">ถ้าแทงทุกไม้ {nb["profit"]:+.2f} หน่วย (คนแทงสุ่มคาดได้ {nb["expected"]:+.2f})</div></div>'
+              f'<div class="d">ถ้าแทงทุกไม้ {nb["profit"]:+.2f} หน่วย (ถ้าแทงมั่วๆ จะได้ราว {nb["expected"]:+.2f})</div></div>'
               f'<div class="s-kpi"><div class="t">ข้ามตามป้ายแล้วประหยัดได้</div><div class="v {"s-up" if nb["saved"] >= 0 else "s-down"}">{num(nb["saved"], 2, sign=True)}</div>'
               f'<div class="d">หน่วย · z = {nb["z"]:+.2f}</div></div></div>'
               f'<div class="s-note">{e(nb_v)} · นับตั้งแต่เพิ่มป้าย ({q.NEGBAND_START})</div></div>')
@@ -1022,9 +1026,9 @@ def _ladder_chapter(done, be, n):
     sp = _spearman(done)
     if sp:
         rho, z = sp
-        trend = (f'ความสัมพันธ์คะแนน↔ชนะ (Spearman) <b>{rho:+.2f}</b> (z ≈ {z:+.1f}) — '
+        trend = (f'คะแนนสูงแล้วชนะบ่อยขึ้นจริงไหม <b>{rho:+.2f}</b> (z ≈ {z:+.1f}) — '
                  + ("คะแนนสูงชนะมากกว่า" if rho > 0 else "คะแนนสูงชนะน้อยกว่า")
-                 + (" อย่างมีนัยสำคัญ" if abs(z) >= 1.96 else " แต่ยังไม่มีนัยสำคัญ จึงยังใช้คะแนนเป็นตัวบอกโอกาสชนะไม่ได้"))
+                 + (" แบบชัดเจน (ไม่ใช่แค่ดวง)" if abs(z) >= 1.96 else " แต่ยังไม่ชัด อาจเป็นแค่ดวง จึงยังใช้คะแนนเป็นตัวบอกโอกาสชนะไม่ได้"))
     else:
         trend = "ข้อมูลยังไม่พอวัดความสัมพันธ์"
     groups = {}
@@ -1046,11 +1050,11 @@ def lifecycle_chapter(state, params, n, cid="st-life"):
     life = state.get("lifecycle") or {}
     learned = {r["id"]: r for r in state.get("learned_rules", [])}
     rows = [(rid, x) for rid, x in life.items()]
-    rows += [(rid, {"kind": "learned", "status": "shadow", "n": 0, "w": 0, "l": 0, "reason": "ยังไม่มีผลนอกกลุ่มตัวอย่าง"})
+    rows += [(rid, {"kind": "learned", "status": "shadow", "n": 0, "w": 0, "l": 0, "reason": "ยังไม่มีผลจริงหลังเริ่มทดลอง"})
              for rid in learned if rid not in life]
-    title, kick = "Rule ไหนกำลังพิสูจน์ตัว", f"บทที่ {n} · สถานะ Rule ผู้สมัคร"
+    title, kick = "Rule ไหนกำลังพิสูจน์ตัว", f"บทที่ {n} · สถานะ Rule ที่กำลังทดลอง"
     if not rows:
-        return chapter(cid, n, kick, title, "ยังไม่มี Rule ผู้สมัคร", "")
+        return chapter(cid, n, kick, title, "ยังไม่มี Rule ที่กำลังทดลอง", "")
     cnt = {k: sum(1 for _, x in rows if x["status"] == k) for k in ("active", "shadow", "retired")}
     ready = sorted(rid for rid, x in rows if x.get("ready") and x["status"] == "shadow")
     lead = ((f'<b>{", ".join(ready)}</b> ผ่านเกณฑ์แล้วแต่ยังไม่เปิดใช้เพราะล็อกสถานะ Rule อยู่ (ปลดล็อกได้ที่ “ตั้งค่าระบบ”) · ' if ready else "")
@@ -1067,7 +1071,7 @@ def lifecycle_chapter(state, params, n, cid="st-life"):
         else:
             desc = q.RULE_NAMES.get(rid, rid)
         prog = min(1.0, x["n"] / max(params["judge_n"], 1))
-        tip = f'{rid}: {desc}\nผลนอกกลุ่มตัวอย่าง {x["w"]}/{dec}' + (f' = {wr:.0%}' if dec else "") + f'\nใช้ไป {x["n"]}/{params["judge_n"]} ครั้ง\n{x.get("reason", "")}'
+        tip = f'{rid}: {desc}\nผลจริงหลังเริ่มทดลอง {x["w"]}/{dec}' + (f' = {wr:.0%}' if dec else "") + f'\nใช้ไป {x["n"]}/{params["judge_n"]} ครั้ง\n{x.get("reason", "")}'
         rdy = (" " + chip("พร้อมใช้ · ล็อกอยู่", "warn")) if x.get("ready") and x["status"] == "shadow" else ""
         return (f'<div class="s-brow s-rv" style="--dl:{min(.03 * i, .6):.2f}s"{tipattr(tip)}><span class="l s-sm"><b>{e(rid)}</b>{rdy} '
                 f'<span class="s-mut">{e(desc[:60])}</span></span>{bar(prog, "t" if x["status"] == "active" else "n" if x["status"] == "shadow" else "r", mark=None)}'
@@ -1083,9 +1087,9 @@ def lifecycle_chapter(state, params, n, cid="st-life"):
     first = next((i for i, t in enumerate(tabs) if not t[2].startswith('<div class="s-mut')), 1)
     tb = ('<div class="s-tabs"><div class="s-tabbar">' + "".join(f'<button class="{"on" if i == first else ""}" data-tab="{k}">{e(t)}</button>' for i, (k, t, _) in enumerate(tabs))
           + "</div>" + "".join(f'<div data-tabpane="{k}" class="{"on" if i == first else ""}">{h}</div>' for i, (k, _, h) in enumerate(tabs)) + "</div>"
-          + f'<div class="s-note">แถบ = ความคืบหน้าสู่การตัดสิน ({params["judge_n"]} ครั้ง) · ตัวเลข = อัตราชนะนอกกลุ่มตัวอย่าง (จำนวนครั้งที่ใช้) · แตะเพื่อดูเหตุผลสถานะ</div>')
+          + f'<div class="s-note">แถบ = ความคืบหน้าสู่การตัดสิน ({params["judge_n"]} ครั้ง) · ตัวเลข = อัตราชนะจากผลจริงหลังเริ่มทดลอง (จำนวนครั้งที่ใช้) · แตะเพื่อดูเหตุผลสถานะ</div>')
     tag = "".join(chip(f"{t} {cnt[k]}", c) for k, t, c in (("active", "ใช้งาน", "ok"), ("shadow", "เงา", "off"), ("retired", "ถอด", "bad")))
-    return chapter(cid, n, kick, title, lead, card("Rule ผู้สมัคร", tb, f'<span class="s-chips">{tag}</span>'))
+    return chapter(cid, n, kick, title, lead, card("Rule ที่กำลังทดลอง", tb, f'<span class="s-chips">{tag}</span>'))
 
 
 def _weights_chapter(state, n):
@@ -1161,13 +1165,13 @@ def backtest_story(res):
           f'background:{"rgba(61,220,151,.35)" if cf["lo"] > 0 else "rgba(255,107,107,.35)" if cf["hi"] < 0 else "rgba(148,163,184,.35)"}"></div>'
           f'<div style="position:absolute;left:calc({pos(cf["mean"]):.1f}% - 6px);top:17px;width:12px;height:12px;border-radius:50%;background:#fff"></div>'
           f'<span class="s-xs s-mut" style="position:absolute;left:50%;top:38px;transform:translateX(-50%)">0</span></div>'
-          f'<div class="s-sm" style="text-align:center">ค่าเฉลี่ย <b>{cf["mean"]:+.3f}</b> ต่อไม้ · ช่วงเชื่อมั่น 95% [{cf["lo"]:+.3f}, {cf["hi"]:+.3f}] · P(ต่าง &gt; 0) ≈ {cf["p_pos"]:.0%}</div>')
+          f'<div class="s-sm" style="text-align:center">ค่าเฉลี่ย <b>{cf["mean"]:+.3f}</b> ต่อไม้ · ช่วงที่น่าจะเป็น 95% [{cf["lo"]:+.3f}, {cf["hi"]:+.3f}] · P(ต่าง &gt; 0) ≈ {cf["p_pos"]:.0%}</div>')
     dif = [(i, x) for i, x in enumerate(cf["diffs"]) if abs(x) > 1e-9][-60:]
     bf, bs = res["bets"]["full"], res["bets"]["static"]
     tips = [f"นัดที่ {i + 1} {bf[i]['home']} vs {bf[i]['away']}\nมีด่าน: {bf[i].get('label', bf[i].get('market', ''))}\nไม่เรียนรู้: {bs[i].get('label', bs[i].get('market', ''))}\nต่างกัน {x:+.2f}" for i, x in dif]
     lead = (f'แบบเรียนรู้มีด่านคัดกรองฟันธงต่างจากแบบไม่เรียนรู้ <b>{cf["changed"]}</b>/{n} นัด · ดีกว่า {cf["better"]} นัด · แย่กว่า {cf["worse"]} นัด · '
-            + ("ช่วงเชื่อมั่นอยู่เหนือศูนย์" if cf["lo"] > 0 else "ช่วงเชื่อมั่นอยู่ใต้ศูนย์" if cf["hi"] < 0 else "ช่วงเชื่อมั่นคร่อมศูนย์ = แยกไม่ออกจากความบังเอิญ"))
-    body = card("ช่วงเชื่อมั่นของกำไรต่อไม้ที่ต่างกัน (bootstrap)", ci) + (card(f"เฉพาะนัดที่ฟันธงต่างกัน ({len(dif)} นัด)", S.vbars([x for _, x in dif], tips)
+            + ("ช่วงที่น่าจะเป็นอยู่เหนือศูนย์" if cf["lo"] > 0 else "ช่วงที่น่าจะเป็นอยู่ใต้ศูนย์" if cf["hi"] < 0 else "ช่วงที่น่าจะเป็นคร่อมศูนย์ = แยกไม่ออกจากความบังเอิญ"))
+    body = card("ช่วงที่น่าจะเป็นของกำไรต่อไม้ที่ต่างกัน (bootstrap)", ci) + (card(f"เฉพาะนัดที่ฟันธงต่างกัน ({len(dif)} นัด)", S.vbars([x for _, x in dif], tips)
                                                                               + '<div class="s-note">เขียว = แบบมีด่านคัดกรองได้ดีกว่า · แดง = แย่กว่า · แตะแท่งเพื่อดูไม้ของทั้งสองแบบ</div>', dl=.1)
                                                                               if dif else card("ความต่างรายนัด", '<div class="s-mut">ทั้งสองแบบฟันธงเหมือนกันทุกนัด</div>', dl=.1))
     pm = res.get("perm")
@@ -1244,7 +1248,7 @@ def settle_result(fe, pick, hg, ag, outcomes, r, pf, changes, new, life_changes)
         body += card("ระบบปรับน้ำหนัก Rule", wr, dl=.1)
     if life_changes:
         lab = {"active": "ใช้งาน", "shadow": "เงา", "retired": "ถอด"}
-        body += card("สถานะ Rule ผู้สมัครที่เปลี่ยน", "".join(
+        body += card("สถานะ Rule ที่กำลังทดลองที่เปลี่ยน", "".join(
             f'<div class="s-kv"><span><b>{e(x[0])}</b> {lab.get(x[1], x[1])} → {lab.get(x[2], x[2])}<div class="s-xs s-mut">{e(x[3])}</div></span></div>' for x in life_changes), dl=.15)
     if new:
         body += card("Rule ใหม่ที่ระบบสร้าง (เริ่มเป็นเงา)", "".join(
