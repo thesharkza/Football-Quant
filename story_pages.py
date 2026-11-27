@@ -289,6 +289,10 @@ def _hero(m, f, pick, res=None):
           f'<div class="lb">{e(pick["label"])}</div>'
           f'<div class="row">{side_stat}{stats}</div>'
           f'{v6_box}{neg_band}{_alert_box(*alerts(res), grn=_sword_items(pick)) if res else ""}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
+    ko = f.get("kickoff_th")
+    if ko:
+        h_ = f.get("hrs_to_ko")
+        comp = f"{comp} · เตะ {ko[8:10]}/{ko[5:7]} {ko[11:16]}" + (f" (อีก {h_:g} ชม.)" if isinstance(h_, (int, float)) and h_ >= 0 else "")
     return (f'<div class="s-hero s-rv"><div class="comp">{e(comp)}</div><div class="s-vs">{team("home")}<div class="s-vsx">VS</div>{team("away")}</div>'
             f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ตัวเลขใหญ่ซ้าย = กำไรรวมของไม้ฝั่งเดียวกันที่ผ่านมา (ไม่ใช่โอกาสชนะ) · '
             f'เลื่อนลงดูว่าระบบคิดยังไงทีละขั้น</div></div>')
