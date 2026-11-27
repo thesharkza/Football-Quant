@@ -451,6 +451,7 @@ def build_features(m, P):
     f["r64_from"] = now_th("%Y-%m-%d")              # วันที่วิเคราะห์ (R64 นับเฉพาะนัดที่วิเคราะห์ตั้งแต่ 25 พ.ย. 2026)
     f["feat_v"] = 4                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 รุ่น 3, R51-R62 รุ่น 4 (นัดที่วิเคราะห์หลังเพิ่ม Rule = จากผลจริงหลังเริ่มทดลอง)
     f.update(discipline_features(m))                  # ใบเหลือง/ใบแดง/ผู้ตัดสิน (เก็บไว้ทดสอบ ยังไม่มีผลต่อการฟันธง)
+    f.update(kickoff_features(m))                     # v6: เวลาเตะ / วิเคราะห์ก่อนเตะกี่ชั่วโมง (เก็บไว้ศึกษา)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     try:
         f["score_model"] = score_model(f)              # สกอร์ที่น่าจะเป็น (แสดงผลเท่านั้น ไม่มีผลต่อการฟันธง)
@@ -1859,6 +1860,112 @@ def v6_track(history):
         out[per] = {"v58": _vs_noskill(v58), "v6a": _vs_noskill(va), "v6b": _vs_noskill(vb)}
     out["need"] = V6_TEST_N
     return out
+
+
+# ---- ห้องทดลอง (v6): รวมทุกการทดลองไว้ที่เดียว ใช้เกณฑ์เดียวกัน ----
+# ตัวแปรที่ทดสอบย้อนหลังแล้วผลไม่คงที่ (ครึ่งแรก/ครึ่งหลังสวนกัน) -> ไม่เปลี่ยนไม้จริง ให้เก็บผลต่อจากนี้ก่อน
+LAB_FROM = V6_FROM
+
+
+def _repick(r, filt, useraw=False):
+    sc = {}
+    for c in r.get("contribs") or []:
+        if c.get("counted") and filt(c) and c.get("market") in ("HDP_HOME", "HDP_AWAY", "OU_OVER", "OU_UNDER"):
+            sc[c["market"]] = sc.get(c["market"], 0.0) + (c["raw"] if useraw else c["eff"])
+    return max(sc, key=sc.get) if sc else None
+
+
+LAB_VARIANTS = {
+    "base": ("ระบบปัจจุบัน (คิดคะแนนแบบย่อ)", lambda r: _repick(r, lambda c: True)),
+    "noctx": ("ไม่ใช้ Rule กลุ่มบริบท", lambda r: _repick(r, lambda c: c.get("group") != "context")),
+    "eqw": ("ทุก Rule น้ำหนักเท่ากัน", lambda r: _repick(r, lambda c: True, True)),
+}
+
+
+def variant_track(history):
+    """เทียบการเลือกไม้แบบต่าง ๆ บนนัดชุดเดียวกัน (all = ย้อนหลัง, fwd = หลัง LAB_FROM)"""
+    out = {k: {"all": [], "fwd": []} for k in LAB_VARIANTS}
+    for r in history:
+        if r.get("status") != "settled" or not r.get("score"):
+            continue
+        o = settle_all(r, *r["score"])
+        fw = str(r.get("created", "")) >= LAB_FROM
+        for k, (_, fn) in LAB_VARIANTS.items():
+            mk = fn(r)
+            if not mk or mk not in o:
+                continue
+            wm, wo = _mk_waters(r["features"], mk)
+            if wm and wo:
+                x = (o[mk][1], wm, wo)
+                out[k]["all"].append(x)
+                if fw:
+                    out[k]["fwd"].append(x)
+    return {k: {"all": _vs_noskill(v["all"]), "fwd": _vs_noskill(v["fwd"])} for k, v in out.items()}
+
+
+def kickoff_track(history):
+    """ศึกษา: วิเคราะห์ก่อนเตะนานแค่ไหน (เก็บตั้งแต่ v6 เพิ่มเวลาเตะ)"""
+    acc = {"<=3": [], "3-8": [], ">8": []}
+    for r in history:
+        if r.get("status") != "settled" or not r.get("score"):
+            continue
+        h = r["features"].get("hrs_to_ko")
+        mk = r["pick"].get("market", "")
+        if h is None or mk[:2] not in ("HD", "OU"):
+            continue
+        wm, wo = _mk_waters(r["features"], mk)
+        if wm and wo:
+            k = "<=3" if h <= 3 else "3-8" if h <= 8 else ">8"
+            acc[k].append((settle_all(r, *r["score"])[mk][1], r["pick"]["price_win"], wo))
+    return {k: _vs_noskill(v) for k, v in acc.items()}
+
+
+def lab_summary(history, P):
+    """ตารางห้องทดลอง: [{"name","what","all","fwd","prog","status"}]"""
+    rows = []
+    fmt = lambda x: {"n": x["n"], "w": x["w"], "l": x["l"], "profit": round(x["profit"], 2), "z": round(x["z"], 2)}
+    v6 = v6_track(history)
+    for k, nm in (("v6a", "v6 แบบข้าม (ไม่แทงสูง/ทีมต่อ)"), ("v6b", "v6 แบบกลับฝั่ง (สูง→ต่ำ, ทีมต่อ→ทีมรอง)")):
+        fw, base = v6["fwd"][k], v6["fwd"]["v58"]
+        rows.append({"name": nm, "what": "เทียบกับไม้จริง v5.8 " + (f"({base['profit']:+.2f})" if base["n"] else ""),
+                     "all": fmt(v6["all"][k]), "fwd": fmt(fw), "prog": f"{fw['n']}/{V6_TEST_N}",
+                     "status": "ครบแล้ว · รอคุณตัดสินใจ" if fw["n"] >= V6_TEST_N else "เก็บผลอยู่"})
+    vt = variant_track(history)
+    for k in ("noctx", "eqw"):
+        fw, b = vt[k]["fwd"], vt["base"]["fwd"]
+        diff = fw["profit"] - b["profit"]
+        rows.append({"name": LAB_VARIANTS[k][0], "what": f"เทียบกับระบบปัจจุบัน: ต่าง {diff:+.2f} หน่วย (หลังเริ่มทดลอง)",
+                     "all": fmt(vt[k]["all"]), "fwd": fmt(fw), "prog": f"{fw['n']}/150",
+                     "status": ("ดีกว่า · เสนอเปลี่ยน" if diff >= 5 else "แย่กว่า · ไม่เปลี่ยน" if diff <= -5 else "ยังสูสี")
+                     if fw["n"] >= 150 else "เก็บผลอยู่"})
+    st_th = {"testing": "เก็บผลอยู่", "propose_skip": "ผ่าน · เสนอให้ข้ามจริง", "drop": "ไม่ผ่าน · เลิกเตือน",
+             "propose_rule": "ผ่าน · เสนอทำเป็น Rule"}
+    for g in guard_track(history).values():
+        rows.append({"name": f"เกราะ {g['id']}: {g['name']}", "what": "เตือนบนการ์ด (แดง/เหลือง)",
+                     "all": fmt(g["all"]), "fwd": fmt(g["fwd"]), "prog": f"{g['fwd']['n']}/{GUARD_TEST_N}",
+                     "status": st_th[g["status"]]})
+    for g in sword_track(history).values():
+        rows.append({"name": f"ดาบ {g['id']}: {g['name']}", "what": "ป้ายเขียวบนการ์ด",
+                     "all": fmt(g["all"]), "fwd": fmt(g["fwd"]), "prog": f"{g['fwd']['n']}/{SWORD_TEST_N}",
+                     "status": st_th[g["status"]]})
+    nb = negband_status(history)
+    rows.append({"name": "ป้ายช่วงคะแนนขาดทุน → ข้าม", "what": f"ข้ามตามป้ายเซฟได้ {nb.get('saved', 0):+.2f} หน่วย",
+                 "all": {"n": nb.get("n", 0), "w": nb.get("w", 0), "l": nb.get("l", 0), "profit": round(nb.get("profit", 0), 2),
+                         "z": round(nb.get("z", 0), 2)}, "fwd": None, "prog": f"{nb.get('n', 0)}/{nb.get('need', 120)}",
+                 "status": {"testing": "เก็บผลอยู่", "pass": "ผ่าน", "fail": "ไม่ผ่าน · เลิกแสดง"}[nb["status"]]})
+    ws = weakskip_study(history)
+    rows.append({"name": "ไม้ที่ข้ามเพราะคะแนนต่ำ", "what": "ถ้าแทงไปจะได้เท่าไร (บวกมาก = ข้ามแล้วพลาดไม้ดี)",
+                 "all": fmt(ws), "fwd": None, "prog": f"{ws['n']}/{ws['need']}",
+                 "status": {"testing": "เก็บผลอยู่", "keep": "ข้ามต่อไป", "propose_off": "เสนอเลิกข้าม"}[ws["status"]]})
+    kt = kickoff_track(history)
+    nk = sum(v["n"] for v in kt.values())
+    rows.append({"name": "เวลาวิเคราะห์ก่อนเตะ", "what": " · ".join(f"{k} ชม. {v['profit']:+.1f} ({v['n']})" for k, v in kt.items()),
+                 "all": None, "fwd": None, "prog": f"{nk}/150", "status": "เก็บผลอยู่" if nk < 150 else "ครบ · ดูผลแต่ละช่วง"})
+    bw = base_rule_watch(history, P)
+    nprop = sum(1 for x in bw if x["propose"])
+    rows.append({"name": "เฝ้าดู Rule หลัก", "what": f"แย่สุด {bw[0]['rule']} z {bw[0]['z']:+.2f}" if bw else "",
+                 "all": None, "fwd": None, "prog": "-", "status": f"เสนอพัก {nprop} ข้อ" if nprop else "ยังไม่มีข้อไหนถึงเกณฑ์"})
+    return rows
 
 
 NEGBAND_TEST_N = 120     # ป้ายช่วงคะแนนติดลบ: ทดสอบให้ครบกี่ไม้ก่อนตัดสิน
@@ -3965,6 +4072,7 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
     home_red_total, away_red_total (ใบแดงรวมทั้งซีซัน), referee (ชื่อผู้ตัดสินนัดนี้ ถ้าประกาศแล้ว),
     referee_yellow_pg, referee_red_pg (ใบเหลือง/แดงเฉลี่ยต่อนัดที่ผู้ตัดสินคนนี้แจก), referee_pen_pg (จุดโทษต่อนัด),
     suspended_home, suspended_away (รายชื่อผู้เล่นที่ติดโทษแบนนัดนี้ เพราะใบเหลืองสะสม/ใบแดง) — ไม่พบให้ null ห้ามเดา
+15. kickoff_th = วันเวลาเริ่มเตะของนัดนี้ "ตามเวลาประเทศไทย (UTC+7)" รูปแบบ "YYYY-MM-DD HH:MM" — ไม่ชัวร์ให้ null
 9. evidence = ข้อความสั้นภาษาไทยไม่เกิน 6 ข้อ บอกหลักฐานสำคัญของแต่ละ flag ที่เป็น true
 10. confidence = high | medium | low
 
@@ -3979,6 +4087,7 @@ RESEARCH_PROMPT = """คุณคือนักวิเคราะห์ข�
  "venue_stats":{"home_gf":null,"home_ga":null,"away_gf":null,"away_ga":null,"games_home":null,"games_away":null},
  "discipline":{"home_yellow_pg":null,"away_yellow_pg":null,"home_red_total":null,"away_red_total":null,"referee":null,
   "referee_yellow_pg":null,"referee_red_pg":null,"referee_pen_pg":null,"suspended_home":null,"suspended_away":null},
+ "kickoff_th":null,
  "evidence":["..."],"confidence":"medium"}"""
 
 
@@ -4150,13 +4259,16 @@ def apply_research(m, r, sources=None, queries=None):
                       "games_home": vs.get("games_home") if _num(vs.get("games_home")) else None,
                       "games_away": vs.get("games_away") if _num(vs.get("games_away")) else None}
     disc = clean_discipline(r.get("discipline"))
+    ko = r.get("kickoff_th")
+    ko = ko.strip()[:16] if isinstance(ko, str) and re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}", ko.strip()) else None
     ev = [str(x) for x in (r.get("evidence") or []) if x][:6] if isinstance(r.get("evidence"), list) else []
     m["research"] = {"evidence": ev, "sources": (sources or [])[:8], "queries": (queries or [])[:6],
                      "confidence": r.get("confidence") if r.get("confidence") in ("high", "medium", "low") else None,
                      "derby_reason": r.get("derby_reason"), "desperation_reason": mo.get("reason"),
                      "avg_goals": lg.get("avg_goals_per_match") if _num(lg.get("avg_goals_per_match")) else None,
                      "draw_rate": lg.get("draw_rate_pct") if _num(lg.get("draw_rate_pct")) else None,
-                     "competition": comp.get("name"), "search": r.get("_search"), "discipline": disc}
+                     "competition": comp.get("name"), "search": r.get("_search"), "discipline": disc,
+                     "kickoff_th": ko}
     return m
 
 
@@ -4182,6 +4294,21 @@ def clean_discipline(d):
             names = [str(x).strip() for x in v if isinstance(x, str) and 1 < len(x.strip()) <= 40][:6]
             out[k] = names
     return out or None
+
+
+def kickoff_features(m):
+    """เวลาเตะ (เวลาไทย) และจำนวนชั่วโมงก่อนเตะตอนวิเคราะห์ -- ใช้ศึกษาว่าวิเคราะห์เร็วเกินไปทำให้แพ้ไหม"""
+    ko = ((m.get("research") or {}).get("kickoff_th"))
+    out = {"kickoff_th": ko, "hrs_to_ko": None}
+    if ko:
+        try:
+            k = _dt_mod.datetime.strptime(ko, "%Y-%m-%d %H:%M")
+            n = _dt_mod.datetime.strptime(now_th(), "%Y-%m-%d %H:%M")
+            h = (k - n).total_seconds() / 3600
+            out["hrs_to_ko"] = round(h, 1) if -3 <= h <= 72 else None
+        except Exception:  # noqa
+            pass
+    return out
 
 
 def discipline_features(m):
