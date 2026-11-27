@@ -71,6 +71,8 @@ def analysis_document(res):
 def warn_level(w):
     """จัดระดับคำเตือนจากการอ่านข้อมูล: red = ราคา/ข้อมูลผิดปกติ, yel = ต้องระวัง, "" = ข้อมูลทั่วไป"""
     w = str(w)
+    if w.startswith("ตัดแถวออก"):                    # แถวที่อ่านผิดถูกตัดทิ้งไปแล้ว ไม่กระทบการคำนวณ -> ไม่ต้องเตือนบนการ์ด
+        return ""
     if w.startswith("ร้ายแรง") or any(k in w for k in ("ผิดปกติ", "ค่าคอมมิชชันสูง", "ค่าต๋งสูง", "ดูแปลก", "เปลี่ยนฝั่ง", "กลับด้าน", "สลับเหย้า", "น่าจะอ่านผิด")):
         return "red"
     if any(k in w for k in ("ไม่ทำงาน", "ไม่พบ", "ตรวจรูป")):
@@ -107,6 +109,11 @@ def _same_book(a, b):
         return False
 
 
+def _sword_items(pick):
+    return [f'ดาบ {sd["id"]}: {sd["name"]} — ที่ผ่านมา {sd["w"]}-{sd["l"]} {sd["profit"]:+.2f} หน่วย · {sd["why"]}'
+            for sd in pick.get("swords") or []]
+
+
 def alerts(res):
     """คืน (ผิดปกติ[แดง], ต้องระวัง[เหลือง]) สำหรับการ์ดรวม"""
     m, f, pick = res["m"], res["f"], res["pick"]
@@ -134,16 +141,16 @@ def alerts(res):
     return red, yel
 
 
-def _alert_box(red, yel, top=3):
-    if not red and not yel:
+def _alert_box(red, yel, top=3, grn=()):
+    if not red and not yel and not grn:
         return ""
     def blk(items, cls, title):
         if not items:
             return ""
-        li = "".join(f'<li class="{"b" if x.startswith(("ร้ายแรง", "เจ้าที่ให้ราคา", "เกาะป้องกัน")) else ""}">{e(x)}</li>' for x in items[:top])
+        li = "".join(f'<li class="{"b" if x.startswith(("ร้ายแรง", "เจ้าที่ให้ราคา", "เกาะป้องกัน", "ดาบ")) else ""}">{e(x)}</li>' for x in items[:top])
         more = f'<li class="more">+ อีก {len(items) - top} ข้อ (ดูต่อในบทตรวจสอบ/สรุป)</li>' if len(items) > top else ""
         return f'<div class="s-al {cls}"><div class="h">{title} ({len(items)})</div><ul>{li}{more}</ul></div>'
-    return ('<div class="s-alerts">' + blk(red, "red", "ระวังมาก: ข้อมูลแปลก / เสี่ยงสูง") + blk(yel, "yel", "ควรระวัง") + "</div>")
+    return ('<div class="s-alerts">' + blk(red, "red", "ระวังมาก: ข้อมูลแปลก / เสี่ยงสูง") + blk(yel, "yel", "ควรระวัง") + blk(list(grn), "grn", "จุดแข็งของไม้นี้ (ดาบ)") + "</div>")
 
 
 def _disc_html(f, d):
@@ -264,7 +271,7 @@ def _hero(m, f, pick, res=None):
           f'<div class="lb">{e(pick["label"])}</div>'
           f'<div class="row"><div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
           f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ความมั่นใจ</div></div></div>{stats}</div>'
-          f'{neg_band}{_alert_box(*alerts(res)) if res else ""}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
+          f'{neg_band}{_alert_box(*alerts(res), grn=_sword_items(pick)) if res else ""}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
     return (f'<div class="s-hero s-rv"><div class="comp">{e(comp)}</div><div class="s-vs">{team("home")}<div class="s-vsx">VS</div>{team("away")}</div>'
             f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ความมั่นใจดูจากคะแนนรวมของ Rule (ต่ำ &lt; 1.2 ≤ กลาง &lt; 2.5 ≤ สูง) '
             f'ไม่ใช่โอกาสชนะ · เลื่อนลงดูว่าระบบคิดยังไงทีละขั้น</div></div>')
