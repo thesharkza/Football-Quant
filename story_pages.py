@@ -71,7 +71,7 @@ def analysis_document(res):
 def warn_level(w):
     """จัดระดับคำเตือนจากการอ่านข้อมูล: red = ราคา/ข้อมูลผิดปกติ, yel = ต้องระวัง, "" = ข้อมูลทั่วไป"""
     w = str(w)
-    if w.startswith("ร้ายแรง") or any(k in w for k in ("ผิดปกติ", "ค่าคอมมิชชันสูง", "เปลี่ยนฝั่ง", "กลับด้าน", "สลับเหย้า", "น่าจะอ่านผิด")):
+    if w.startswith("ร้ายแรง") or any(k in w for k in ("ผิดปกติ", "ค่าคอมมิชชันสูง", "ค่าต๋งสูง", "ดูแปลก", "เปลี่ยนฝั่ง", "กลับด้าน", "สลับเหย้า", "น่าจะอ่านผิด")):
         return "red"
     if any(k in w for k in ("ไม่ทำงาน", "ไม่พบ", "ตรวจรูป")):
         return "yel"
@@ -218,8 +218,8 @@ def _hero(m, f, pick, res=None):
     g = pick.get("gate")
     if g:
         rec_ = f" · ที่ผ่านมา {g['w']}-{g['l']} {g['profit']:+.2f}" if g["n"] else ""
-        flags.append(({"pass": "ช่วงคะแนนผ่าน" + rec_, "fail": "ช่วงคะแนนไม่ผ่าน" + rec_,
-                       "data": f"ช่วงคะแนนข้อมูลยังไม่พอ ({g['n']}/{g['min_n']} ไม้)"}[g["status"]],
+        flags.append(({"pass": "คะแนนช่วงนี้เคยกำไร" + rec_, "fail": "คะแนนช่วงนี้เคยขาดทุน" + rec_,
+                       "data": f"คะแนนช่วงนี้ยังมีข้อมูลน้อย ({g['n']}/{g['min_n']} ไม้)"}[g["status"]],
                       {"pass": "ok", "fail": "bad", "data": "off"}[g["status"]]))
     neg_band = ""
     nbs = (g or {}).get("nb_status") or {}
@@ -235,39 +235,39 @@ def _hero(m, f, pick, res=None):
                     f'<span>{e(g["kind_th"])} คะแนน {e(g["label"])} ที่ผ่านมา {g["w"]}-{g["l"]} {g["profit"]:+.2f} จาก {g["n"]} ไม้ · '
                     f'ไม่ต้องแทงฝั่งตรงข้าม{e(tst)}</span></div>')
     sup, opp = pick.get("support"), pick.get("oppose")
-    stats = (f'<div class="s-statline"><div class="v">{num(pick["strength"], 2)}</div><div class="t">คะแนนสัญญาณ</div></div>')
+    stats = (f'<div class="s-statline"><div class="v">{num(pick["strength"], 2)}</div><div class="t">คะแนนรวม</div></div>')
     if sup is not None and opp is not None:
         stats += (f'<div class="s-statline"{tipattr("คะแนนรวมของฝั่งที่เลือก เทียบกับฝั่งตรงข้ามในตลาดเดียวกัน (หลังตัดฝั่งที่ถูกแบน)")}>'
-                  f'<div class="v">{sup:.2f} : {opp:.2f}</div><div class="t">หนุน : ค้าน</div></div>')
+                  f'<div class="v">{sup:.2f} : {opp:.2f}</div><div class="t">คะแนนเชียร์ : คะแนนแย้ง</div></div>')
     best = ""
     b = pick.get("best")
     if b and not skip:
-        best = (f'<div class="best">ราคาดีที่สุด <b>{e(b["book"])} @{b["price"]:.2f}</b> · ดีกว่าราคามัธยฐาน +{b["gain"]:.2f} · '
+        best = (f'<div class="best">ราคาดีที่สุด <b>{e(b["book"])} @{b["price"]:.2f}</b> · ดีกว่าราคากลาง +{b["gain"]:.2f} · '
                 f'จุดคุ้มทุน {b["breakeven"]:.1%} (จาก {b["breakeven_median"]:.1%})</div>')
     extra = ""
     if skip:
         extra = '<ul class="s-list" style="color:inherit;opacity:.9">' + "".join(f"<li>{e(x)}</li>" for x in pick.get("skip_reasons", [])) + "</ul>"
     ru = [r for r in (pick.get("runner_up") or []) if r[1] > 0.05][:1]
     if ru:
-        extra += f'<div class="s-sm" style="margin-top:8px;opacity:.8">ทางเลือกรอง: {e(mth(ru[0][0], f))} ({ru[0][1]:.2f})</div>'
+        extra += f'<div class="s-sm" style="margin-top:8px;opacity:.8">ตัวเลือกที่สอง: {e(mth(ru[0][0], f))} ({ru[0][1]:.2f})</div>'
     sm = f.get("score_model")
     if sm:
         cp = q.cover_probs(f, sm)
         if cp:
             hh, aa = cp["hdp"]["home"], cp["hdp"]["away"]
             _hf = lambda d: f' (ได้ครึ่ง {d["half_win"]:.0%})' if d["half_win"] >= .005 else ""
-            extra += (f'<div class="sc">โอกาสได้แฮนดิแคป (รวมทุกสกอร์): <b>{e(f["home"])} {hh["get"]:.0%}</b>{_hf(hh)} · '
-                      f'<b>{e(f["away"])} {aa["get"]:.0%}</b>{_hf(aa)}' + (f' · คืนทุน {hh["push"]:.0%}' if hh["push"] >= .005 else "") + "</div>")
+            extra += (f'<div class="sc">โอกาสชนะแฮนดิแคป (คิดจากทุกสกอร์): <b>{e(f["home"])} {hh["get"]:.0%}</b>{_hf(hh)} · '
+                      f'<b>{e(f["away"])} {aa["get"]:.0%}</b>{_hf(aa)}' + (f' · เสมอเงินคืน {hh["push"]:.0%}' if hh["push"] >= .005 else "") + "</div>")
         extra += (f'<div class="sc">คาดว่าเหย้ายิง {sm["lh"]:.2f} เยือนยิง {sm["la"]:.2f} ลูก · สกอร์ที่น่าจะเป็น '
                   + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:3]) + "</div>")
-    pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"ข้ามไม้นี้ · ติดตามเป็นไม้เงา" if skip else "สัญญาณฟันธงเดี่ยว · ราคาปัจจุบัน"}</div>'
+    pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"ข้ามไม้นี้ · เก็บผลไว้ดูเฉยๆ" if skip else "ไม้ที่ระบบเลือก · ราคาตอนนี้"}</div>'
           f'<div class="lb">{e(pick["label"])}</div>'
           f'<div class="row"><div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
-          f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ระดับสัญญาณ</div></div></div>{stats}</div>'
+          f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ความมั่นใจ</div></div></div>{stats}</div>'
           f'{neg_band}{_alert_box(*alerts(res)) if res else ""}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
     return (f'<div class="s-hero s-rv"><div class="comp">{e(comp)}</div><div class="s-vs">{team("home")}<div class="s-vsx">VS</div>{team("away")}</div>'
-            f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ระดับสัญญาณจัดจากคะแนนของ Rule (ต่ำ &lt; 1.2 ≤ กลาง &lt; 2.5 ≤ สูง) '
-            f'ไม่ใช่โอกาสชนะ · เลื่อนลงเพื่อดูว่าระบบคิดอย่างไรทีละขั้น</div></div>')
+            f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ความมั่นใจดูจากคะแนนรวมของ Rule (ต่ำ &lt; 1.2 ≤ กลาง &lt; 2.5 ≤ สูง) '
+            f'ไม่ใช่โอกาสชนะ · เลื่อนลงดูว่าระบบคิดยังไงทีละขั้น</div></div>')
 
 
 # ---------------------------------------------------------------------------- บท: สกอร์ที่คาด
@@ -410,20 +410,20 @@ def _ch_market(f):
     o, c = f["x12_open"], f["x12_cur"]
     fi, di = (0, 2) if f["fav"] == "home" else (2, 0)
     d = (xc[fi] - xo[fi]) * 100
-    lead = (f'ตลาดมอง <b>{e(f["fav_name"])}</b> เป็นต่อ ให้โอกาสชนะโดยนัย <b>{xc[fi]:.0%}</b> '
+    lead = (f'ตลาดมอง <b>{e(f["fav_name"])}</b> เป็นต่อ ให้โอกาสชนะราว <b>{xc[fi]:.0%}</b> '
             + (f'({"เพิ่มขึ้น" if d > 0 else "ลดลง"} {abs(d):.1f} จุดจากราคาเปิด)' if abs(d) >= 0.5 else "(ใกล้เคียงราคาเปิด)")
             + f' · เสมอ {xc[1]:.0%} · {e(f["dog_name"])} {xc[di]:.0%}')
     rows = ""
     for i, (lab, col) in enumerate(((f["home"], "t"), ("เสมอ", "n"), (f["away"], "i"))):
         dp = (xc[i] - xo[i]) * 100
         cls = "s-up" if dp > 0.3 else "s-down" if dp < -0.3 else "s-mut"
-        tip = f"{lab}\nราคาเปิด {o[i]:.2f} → ปัจจุบัน {c[i]:.2f}\nโอกาสโดยนัย {xo[i]:.1%} → {xc[i]:.1%}"
+        tip = f"{lab}\nราคาเปิด {o[i]:.2f} → ปัจจุบัน {c[i]:.2f}\nโอกาสชนะ {xo[i]:.1%} → {xc[i]:.1%}"
         rows += (f'<div class="s-prob"{tipattr(tip)}><span class="s-sm" style="overflow-wrap:anywhere">{e(lab)}</span>'
                  f'<div class="stk">{bar(xo[i], "o", "thin", dl=.1 * i)}{bar(xc[i], col, "fat", dl=.1 * i + .1)}</div>'
                  f'<span class="v">{xc[i]:.0%}<div class="s-xs {cls}">{dp:+.1f}pp</div></span></div>')
     odds = "".join(f'<div class="s-kv"><span>{e(lab)}</span><b>{c[i]:.2f} <span class="s-mut s-xs">(เปิด {o[i]:.2f})</span></b></div>'
                    for i, lab in enumerate((f["home"], "เสมอ", f["away"])))
-    body = ('<div class="s-grid">' + card("โอกาสโดยนัยจากราคา 1X2", rows + '<div class="s-note">แถบบาง = ราคาเปิด · แถบหนา = ราคาปัจจุบัน · แตะแถบเพื่อดูราคา</div>')
+    body = ('<div class="s-grid">' + card("โอกาสชนะที่ราคา 1X2 บอก", rows + '<div class="s-note">แถบบาง = ราคาเปิด · แถบหนา = ราคาปัจจุบัน · แตะแถบเพื่อดูราคา</div>')
             + card("ราคา 1X2 ปัจจุบัน", odds + f'<div class="s-note">ค่าความขัดแย้งระหว่างตลาด {f.get("conflict", 0):.0%} · '
                    f'พูล 1X2 ทีมต่อ {f.get("x12_pp", 0):+.1f}pp</div>', dl=.1) + "</div>")
     return chapter("ch-market", "@N@", "บทที่ @N@ · ตลาดคาดอะไร", "ราคาบอกว่าใครเหนือกว่า", lead, body)
@@ -788,9 +788,9 @@ def _ch_summary(f, contribs, pick):
     lead = (f'{"ระบบแนะนำให้<b>ข้ามไม้นี้</b> และติดตาม " if pick.get("skip") else "ไม้ของแมตช์นี้คือ "}<b>{e(pick["label"])}</b> '
             f'ระดับสัญญาณ<b>{e(pick.get("tier", ""))}</b> (คะแนน {pick["strength"]:.2f})')
     b = pick.get("best")
-    price = (f'<div class="s-big s-up">{e(b["book"])} @{b["price"]:.2f}</div><div class="s-sm s-mut">ดีกว่าราคามัธยฐาน +{b["gain"]:.2f} · '
+    price = (f'<div class="s-big s-up">{e(b["book"])} @{b["price"]:.2f}</div><div class="s-sm s-mut">ดีกว่าราคากลาง +{b["gain"]:.2f} · '
              f'จุดคุ้มทุนลดจาก {b["breakeven_median"]:.1%} เหลือ {b["breakeven"]:.1%}</div>') if b else \
-        f'<div class="s-mid">@{pick.get("price_win", 0):.2f}</div><div class="s-sm s-mut">ไม่มีเจ้าที่ให้ราคาดีกว่าราคามัธยฐาน</div>'
+        f'<div class="s-mid">@{pick.get("price_win", 0):.2f}</div><div class="s-sm s-mut">ไม่มีเจ้าที่ให้ราคาดีกว่าราคากลาง</div>'
     body = ('<div class="s-grid">' + card("เหตุผลหลัก", f'<ul class="s-list">{why}</ul>') + card("สิ่งที่ต้องระวัง", f'<ul class="s-list">{rk}</ul>', dl=.1)
             + card("ราคาที่ควรหา", price, dl=.2) + "</div>"
             + '<div class="s-note s-rv">ผลวิเคราะห์เป็นแบบจำลองเชิงสถิติจากราคาและข้อมูลที่อ่านได้ ไม่รับประกันผล และไม่ใช่คำแนะนำทางการเงิน</div>')
@@ -933,7 +933,7 @@ def stats_story(state, history, params):
     if wb:
         pm, pb = sum(r["pick_profit"] for r in wb), sum(r["pick_profit_best"] for r in wb)
         extra += card(f"Line shopping · {len(wb)} ไม้",
-                      f'<div class="s-kv"><span>กำไรที่ราคามัธยฐาน</span><b class="{"s-up" if pm >= 0 else "s-down"}">{pm:+.2f}</b></div>'
+                      f'<div class="s-kv"><span>กำไรที่ราคากลาง</span><b class="{"s-up" if pm >= 0 else "s-down"}">{pm:+.2f}</b></div>'
                       f'<div class="s-kv"><span>ถ้าวางที่เจ้าที่ให้ราคาดีที่สุด</span><b class="{"s-up" if pb >= 0 else "s-down"}">{pb:+.2f}</b></div>'
                       f'<div class="s-kv"><span>ส่วนต่าง</span><b class="s-up">{pb - pm:+.2f} ({(pb - pm) / len(wb):+.3f}/ไม้)</b></div>', dl=.1)
     if skipped:
