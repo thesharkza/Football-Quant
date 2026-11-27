@@ -80,7 +80,7 @@ DEFAULT_PARAMS = {
     "exclude_universal": True,   # ไม่ใช้เงื่อนไขที่จริงเกือบทุกนัด (เช่น ctx:league) สร้าง Rule
     "universal_cov": 0.85,
     # --- วงจรชีวิตของ Rule ที่ระบบสร้างเอง/Rule ทดลอง: เงา -> ปลดล็อค -> ถอด ---
-    "unlock_wr": 0.65,           # อัตราชนะนอกกลุ่มตัวอย่าง (out-of-sample) ขั้นต่ำเพื่อปลดล็อคทางลัด
+    "unlock_wr": 0.65,           # อัตราชนะจากผลจริงหลังเริ่มทดลอง (out-of-sample) ขั้นต่ำเพื่อปลดล็อคทางลัด
     "unlock_min_n": 40,          # จำนวนครั้งขั้นต่ำของทางลัด (เดิม 30: Rule ที่ไม่มีประโยชน์หลุดผ่านได้ ~9% ต่อข้อ)
     "judge_n": 70,               # ครบกี่ครั้งถึงตัดสินสุดท้าย (ผ่านเกณฑ์นัยสำคัญ -> ปลดล็อค, ไม่ผ่าน -> ถอด)
     "judge_max_n": 150,          # Rule ที่ผลยังเป็นบวกแต่ไม่ชัดตอนครบ judge_n -> ติดตามต่อจนครบเท่านี้ก่อนถอด
@@ -99,7 +99,7 @@ DEFAULT_PARAMS = {
     "gate_edges": [1.0, 1.5, 2.0, 2.5, 3.0],
     "lock_unlocks": True,        # ล็อก: Rule ที่ผ่านเกณฑ์ยังไม่ถูกเปิดใช้อัตโนมัติ (คงเป็นเงา ติดป้าย "พร้อมใช้") จนกว่าจะปลดล็อกเอง
     "lb_z_fast": 1.96, "lb_z_judge": 1.645,          # ทางลัดใช้ความเชื่อมั่น 95% (เดิม 1.28 = 80%)
-    "retire_min_n": 20,          # ใช้ครบเท่านี้แล้วอัตราชนะต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ถอด
+    "retire_min_n": 20,          # ใช้ครบเท่านี้แล้วอัตราชนะต่ำกว่าจุดคุ้มทุนแบบชัดเจน (ไม่ใช่แค่ดวง) -> ถอด
     "decline_window": 10,        # ขนาดช่วงที่ใช้ตรวจว่าอัตราชนะลดลงต่อเนื่อง 3 ช่วง
     # --- สถานะ "ข้าม": ไม้ที่สัญญาณอ่อนหรือขัดกัน ยังคำนวณไม้เงาไว้ติดตามผล แต่ไม่นับเป็นไม้ที่เล่น ---
     "skip_enabled": True,
@@ -449,7 +449,7 @@ def build_features(m, P):
     f["home_wr5"], f["home_gf5"], f["home_ga5"] = _f5("home")
     f["away_wr5"], f["away_gf5"], f["away_ga5"] = _f5("away")
     f["r64_from"] = now_th("%Y-%m-%d")              # วันที่วิเคราะห์ (R64 นับเฉพาะนัดที่วิเคราะห์ตั้งแต่ 25 พ.ย. 2026)
-    f["feat_v"] = 4                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 รุ่น 3, R51-R62 รุ่น 4 (นัดที่วิเคราะห์หลังเพิ่ม Rule = นอกกลุ่มตัวอย่าง)
+    f["feat_v"] = 4                                   # รุ่นของ features: R47 นับตั้งแต่รุ่น 2, R48-R50 รุ่น 3, R51-R62 รุ่น 4 (นัดที่วิเคราะห์หลังเพิ่ม Rule = จากผลจริงหลังเริ่มทดลอง)
     f.update(discipline_features(m))                  # ใบเหลือง/ใบแดง/ผู้ตัดสิน (เก็บไว้ทดสอบ ยังไม่มีผลต่อการฟันธง)
     f.update(team_news_features(m, f))                # ข้อมูลทีม (ไม่เข้า tags: ใช้กับ Rule เงา R42-R46 เท่านั้น)
     try:
@@ -476,7 +476,7 @@ def verify_home_away(m, f):
     if abs(lc) >= 0.5:
         ok = ("home" if xh < xa else "away") == ("home" if lc < 0 else "away")
         v.append((ok, f"เรต HDP ปัจจุบัน {fmt_line(lc)} ({'เจ้าบ้านต่อ' if lc < 0 else 'เจ้าบ้านรอง'}) "
-                      f"{'สอดคล้อง' if ok else 'ขัดแย้ง'}กับ 1X2 ปัจจุบัน ({xh:.2f} / {xa:.2f})"
+                      f"{'ไปทางเดียวกัน' if ok else 'สวนทาง'}กับ 1X2 ปัจจุบัน ({xh:.2f} / {xa:.2f})"
                       + ("" if ok else " -> ตรวจว่าสลับเหย้า/เยือนหรือไม่"))
                  )
     else:
@@ -1314,7 +1314,7 @@ def exp64(f, P, c):
     return _exp([(r["market"], 1.0)], [], r["note"].replace("R63:", "R64:"))
 
 
-# Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
+# Rule ทดลองจากเอกสารของผู้ใช้ (R28-R41): เริ่มเป็น "เงา" (ประเมินเบื้องหลังเท่านั้น) จนกว่าจะผ่านเกณฑ์จากผลจริงหลังเริ่มทดลอง
 EXPERIMENTAL = {"R28": exp28, "R29": exp29, "R30": exp30, "R31": exp31, "R32": exp32, "R33": exp33, "R34": exp34,
                 "R35": exp35, "R36": exp36, "R37": exp37, "R38": exp38, "R39": exp39, "R40": exp40,
                 "R42": exp42, "R43": exp43, "R44": exp44, "R45": exp45, "R46": exp46,
@@ -1356,7 +1356,7 @@ def _declining(results, W, be):
 
 
 def lifecycle_update(store, f, outcomes):
-    """ติดตามผลนอกกลุ่มตัวอย่างของ Rule ผู้สมัครทุกข้อที่เงื่อนไขตรงกับนัดนี้ (ทั้งเงาและที่ใช้งานอยู่)
+    """ติดตามผลจริงหลังเริ่มทดลองของ Rule ที่กำลังทดลองทุกข้อที่เงื่อนไขตรงกับนัดนี้ (ทั้งเงาและที่ใช้งานอยู่)
     แล้วตัดสินสถานะ: เงา -> ปลดล็อค (ผ่านเกณฑ์) / ถอด (ไม่มีประโยชน์ สวนทาง หรือแย่ลงต่อเนื่อง)
     เรียกก่อน discover_rules ของนัดเดียวกัน เพื่อให้ผลที่นับเป็นผลที่ Rule ยังไม่เคยเห็น คืนรายการที่เปลี่ยนสถานะ"""
     if getattr(store, "legacy_learned", False) and not getattr(store, "include_manual", True):
@@ -1372,7 +1372,7 @@ def lifecycle_update(store, f, outcomes):
         if e0 and e0.get("status") in ("shadow", "retired") and not e0.get("restored") and \
                 ("ลดลงต่อเนื่อง" in str(e0.get("reason")) or (e0.get("revived") and e0.get("ready_at") is not None)):
             e0.update(status="active", restored=True, post=[0, 0],
-                      reason="คืนสถานะใช้งาน (ผู้ใช้อนุมัติไว้ · ถูกถอดด้วยเกณฑ์เก่า 'ลดลง 3 ช่วงติด' ที่ถอด Rule ดีบ่อยเกินไป)")
+                      reason="เปิดใช้คืนแล้ว (คุณอนุมัติไว้ แต่ก่อนหน้านี้โดนเกณฑ์เก่าที่เข้มเกินถอดออกไป)")
     for rid in (P.get("revive_rules") or []):          # เปิดติดตามต่อทันที แม้นัดนี้ Rule นั้นไม่ทำงาน
         e0 = life.get(rid)
         if e0 and e0.get("status") == "retired" and not e0.get("revived") and "ไม่ดีกว่าจุดคุ้มทุน" in str(e0.get("reason")):
@@ -1400,24 +1400,24 @@ def lifecycle_update(store, f, outcomes):
         old = e["status"]
         new, why = old, None
         if dec >= P["retire_min_n"] and _wilson_hi(e["w"], dec, P["lb_z_judge"]) < be:
-            new, why = "retired", f"สวนทาง: อัตราชนะ {wr:.0%} ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ ({e['w']}/{dec})"
+            new, why = "retired", f"สวนทาง: อัตราชนะ {wr:.0%} ต่ำกว่าจุดคุ้มทุนแบบชัดเจน (ไม่ใช่แค่ดวง) ({e['w']}/{dec})"
         elif old == "active" and _post_bad(e, be):
             pw, pl = e["post"]
-            new, why = "retired", (f"หลังเปิดใช้ ชนะ {pw}-{pl} ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ "
-                                   f"(ตรวจเมื่อครบ {POST_MIN_N}+ ครั้งหลังเปิดใช้)")
+            new, why = "retired", (f"หลังเปิดใช้ ชนะ {pw} แพ้ {pl} แย่กว่าจุดคุ้มทุนชัดเจน ไม่ใช่แค่ดวงไม่ดี "
+                                   f"(ดูหลังเปิดใช้ครบ {POST_MIN_N} ครั้งขึ้นไป)")
         elif old == "shadow":
             if dec >= P["unlock_min_n"] and wr >= P["unlock_wr"] and _wilson_lo(e["w"], dec, P["lb_z_fast"]) > be:
-                new, why = "active", f"ผ่านเกณฑ์ทางลัด: ชนะ {wr:.0%} จาก {dec} ครั้ง (≥ {P['unlock_wr']:.0%}) นอกกลุ่มตัวอย่าง"
+                new, why = "active", f"ผ่านเกณฑ์ทางลัด: ชนะ {wr:.0%} จาก {dec} ครั้ง (≥ {P['unlock_wr']:.0%}) จากผลจริงหลังเริ่มทดลอง"
             elif e["n"] >= P["judge_n"]:
                 if _wilson_lo(e["w"], dec, P["lb_z_judge"]) > be:
-                    new, why = "active", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} สูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ"
+                    new, why = "active", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} สูงกว่าจุดคุ้มทุนแบบชัดเจน (ไม่ใช่แค่ดวง)"
                 elif wr > be and e["n"] < P.get("judge_max_n", P["judge_n"]):
                     if not e.get("extended"):              # ผลเป็นบวกแต่ยังไม่ชัด -> ติดตามต่อ
                         e["extended"] = True
                         e["reason"] = (f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} เป็นบวกแต่ยังไม่ชัด -> ติดตามต่อจนครบ "
                                        f"{P.get('judge_max_n')} ครั้ง")
                 else:
-                    new, why = "retired", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} ไม่ดีกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ -> ไม่มีประโยชน์"
+                    new, why = "retired", f"ครบ {e['n']} ครั้ง: ชนะ {wr:.0%} ไม่ดีกว่าจุดคุ้มทุนชัดพอ -> ไม่มีประโยชน์"
         if new == "active" and old == "shadow" and P.get("lock_unlocks") and rid in (P.get("approved_rules") or []):
             pass                                       # ผู้ใช้อนุมัติ Rule นี้ไว้แล้ว -> เปิดใช้ได้แม้ล็อกอยู่
         elif new == "active" and old == "shadow" and P.get("lock_unlocks"):
@@ -1657,6 +1657,66 @@ def negband_track(history):
             "profit": pf, "saved": -pf, "expected": ex, "z": (pf - ex) / math.sqrt(var) if var > 0 else 0.0}
 
 
+# ---- เกาะป้องกัน (จากการวิเคราะห์ไม้ที่แพ้ 27 พ.ย. 2026: หาเงื่อนไขที่แพ้มากกว่าปกติ แล้วทดสอบซ้ำกับข้อมูลช่วงหลังที่ไม่ได้ใช้หา) ----
+# ตอนนี้เป็น "คำเตือน" เท่านั้น ไม่เปลี่ยนไม้ · ติดตามผลต่อจากวันที่สร้าง ถ้าครบ GUARD_TEST_N ไม้และ z <= -2 จะเสนอให้ข้ามจริง (ต้องอนุมัติ)
+GUARD_FROM = "2026-11-27 06:30"
+GUARD_TEST_N = 60
+GUARDS = {
+    "G1": {"name": "แทงทีมต่อทั้งที่เรตร่วง", "level": "red",
+           "why": "เรตทีมต่อถูกลดลงตั้งแต่ 0.25 แปลว่าตลาดเริ่มไม่เชื่อทีมต่อ แต่ระบบยังเลือกทีมต่อ (แทงสวนเงิน)"},
+    "G2": {"name": "แทงทีมต่อทั้งที่แฮนดิแคปขัดกับ 1X2", "level": "yel",
+           "why": "ราคาแฮนดิแคปกับราคา 1X2 มองทีมต่อไม่ตรงกัน แปลว่าตลาดเองก็ยังไม่มั่นใจทีมต่อ"},
+    "G3": {"name": "แทงทีมต่อทั้งที่เส้นสูง/ต่ำลดลง", "level": "yel",
+           "why": "เส้นสูง/ต่ำถูกลดลง แปลว่าตลาดคิดว่าจะยิงกันน้อย ทีมต่อจะชนะขาดได้ยากขึ้น"},
+}
+
+
+def guard_hits(f, pick):
+    """เกาะป้องกันที่ตรงกับไม้นี้ -> รายการรหัส"""
+    mk = pick.get("market", "")
+    if not mk.startswith("HDP") or mk != f.get("fav_hdp"):
+        return []
+    tags = set(f.get("tags") or [])
+    out = []
+    if "hdp:crash" in tags:
+        out.append("G1")
+    if "decoupled" in tags:
+        out.append("G2")
+    if "ou_move:down" in tags:
+        out.append("G3")
+    return out
+
+
+def guard_track(history):
+    """ผลของไม้ที่เกาะป้องกันแต่ละข้อทำงาน: ทั้งหมด และหลังวันที่สร้าง (จากผลจริงหลังเริ่มทดลองจริง)"""
+    acc = {g: {"all": [], "fwd": []} for g in GUARDS}
+    for r in history:
+        if r.get("status") != "settled" or not r.get("score"):
+            continue
+        p = r["pick"]
+        mk = p.get("market", "")
+        if not mk.startswith("HDP"):
+            continue
+        hits = guard_hits(r["features"], p)
+        if not hits:
+            continue
+        wm, wo = _mk_waters(r["features"], mk)
+        if not wm or not wo:
+            continue
+        it = (settle_all(r, *r["score"])[mk][1], p["price_win"], wo)
+        for g in hits:
+            acc[g]["all"].append(it)
+            if str(r.get("created", "")) >= GUARD_FROM:
+                acc[g]["fwd"].append(it)
+    out = {}
+    for g, d in acc.items():
+        a, fw = _vs_noskill(d["all"]), _vs_noskill(d["fwd"])
+        st_ = "propose_skip" if fw["n"] >= GUARD_TEST_N and fw["z"] <= -2 else \
+            "drop" if fw["n"] >= GUARD_TEST_N else "testing"
+        out[g] = {**GUARDS[g], "id": g, "all": a, "fwd": fw, "status": st_}
+    return out
+
+
 NEGBAND_TEST_N = 120     # ป้ายช่วงคะแนนติดลบ: ทดสอบให้ครบกี่ไม้ก่อนตัดสิน
 
 
@@ -1849,7 +1909,7 @@ def market_role(mk, f):
 
 
 def rule_status(store, rid, kind):
-    """สถานะของ Rule ผู้สมัคร: shadow (เงา/ระงับ) | active (ใช้งาน) | retired (ถอด)"""
+    """สถานะของ Rule ที่กำลังทดลอง: shadow (เงา/ระงับ) | active (ใช้งาน) | retired (ถอด)"""
     if kind == "learned" and getattr(store, "legacy_learned", False):
         return "active"                                  # นโยบายเดิม (ใช้ทุก Rule ทันที) สำหรับเทียบใน backtest
     e = (store.state.get("lifecycle") or {}).get(rid)
@@ -1875,7 +1935,7 @@ def retire_x12_learned(state):
 
 
 def candidates_for(f, P, store, contribs=None):
-    """Rule ผู้สมัคร (ที่ระบบสร้างเอง + Rule ทดลอง) ที่เงื่อนไขตรงกับแมตช์นี้ -> {id: {kind, market, role, rec, veto, note, flow_only}}"""
+    """Rule ที่กำลังทดลอง (ที่ระบบสร้างเอง + Rule ทดลอง) ที่เงื่อนไขตรงกับแมตช์นี้ -> {id: {kind, market, role, rec, veto, note, flow_only}}"""
     out = {}
     for lr in store.state.get("learned_rules", []):
         if lr.get("enabled", True) and not str(lr["role"]).startswith("X12") and set(lr["tags"]) <= set(f.get("tags", [])):
@@ -2125,7 +2185,7 @@ class Store:
     def _migrate(self):
         """V5.8 -> V5.9: R17 เดิม (Coupled Steam) -> R27
         V5.9 -> V6.0: R27 (Coupled Steam) -> X1, R28 (Current Odds Anchor) -> X2 เพราะ R27-R41 เป็นกฎชุดใหม่
-        และ Rule ที่ระบบสร้างเองทั้งหมดเริ่มสถานะ "เงา" (ระงับ) จนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง"""
+        และ Rule ที่ระบบสร้างเองทั้งหมดเริ่มสถานะ "เงา" (ระงับ) จนกว่าจะผ่านเกณฑ์จากผลจริงหลังเริ่มทดลอง"""
         meta = self.state.setdefault("meta", {"next_learned": 1})
         w, rs = self.state.setdefault("weights", {}), self.state.setdefault("rule_stats", {})
         sch = meta.get("schema")
@@ -2187,6 +2247,16 @@ class Store:
 def analyze_match(m, store):
     f, contribs, pick = analyze_features(m, build_features(m, store.params), store)
     gate_check(store, f, pick)
+    try:
+        hits = guard_hits(f, pick)
+        if hits:
+            gt = guard_track(store.history)
+            pick["guards"] = [{k: gt[g][k] for k in ("id", "name", "level", "why", "status")} |
+                              {"n": gt[g]["all"]["n"], "w": gt[g]["all"]["w"], "l": gt[g]["all"]["l"],
+                               "profit": round(gt[g]["all"]["profit"], 2), "z": round(gt[g]["all"]["z"], 2),
+                               "fwd_n": gt[g]["fwd"]["n"]} for g in hits if gt[g]["status"] != "drop"]
+    except Exception:  # noqa
+        pass
     if pick.get("gate"):
         try:
             nb = negband_status(store.history)
@@ -2315,7 +2385,7 @@ def _build_contribs(raw, f, P, S):
 
 
 def _base_raw(f, P):
-    """คะแนนดิบจาก Rule หลัก 1-26 (+X1/X2) ก่อนรวม Rule ผู้สมัคร"""
+    """คะแนนดิบจาก Rule หลัก 1-26 (+X1/X2) ก่อนรวม Rule ที่กำลังทดลอง"""
     raw = []                                         # (rule, market, value, note)
     for fn in RULES:
         raw += fn(f, P)
@@ -2572,6 +2642,8 @@ def render_report(m, f, contribs, pick, store):
                 L.append(f"  โอกาสสูง/ต่ำ {cp['ou']['line']:g}: สูง {cp['ou']['over']['get']:.0%} · ต่ำ {cp['ou']['under']['get']:.0%}"
                          + (f" · คืนทุน {cp['ou']['over']['push']:.0%}" if cp["ou"]["over"]["push"] >= .005 else ""))
     g = pick.get("gate")
+    for gd in pick.get("guards") or []:
+        L.append(f"\n⚠ เกาะป้องกัน {gd['id']}: {gd['name']} · ที่ผ่านมา {gd['w']}-{gd['l']} {gd['profit']:+.2f} หน่วย (z {gd['z']:+.2f}) · {gd['why']}")
     if g:
         st_th = {"pass": "ผ่าน · ลงทุนได้", "fail": "ไม่ผ่าน · งดลงทุน" if g["enabled"] else "ไม่ผ่าน (ตัวกรองปิดอยู่)", "data": "ข้อมูลยังไม่พอ · ลงทุนตามปกติ"}[g["status"]]
         L.append(f"\n🚦 ตัวกรองช่วงคะแนน: {g['kind_th']} คะแนน {g['label']} — {st_th}"
@@ -2974,7 +3046,7 @@ def accumulate_stats(stats, tags, roles, P):
 
 
 def discover_rules(store, verbose=True):
-    """ค้นหารูปแบบ (ชุดเงื่อนไข tags) ที่ชนะ/แพ้ซ้ำอย่างมีนัยสำคัญ แล้วแปลงเป็น Rule ใหม่"""
+    """ค้นหารูปแบบ (ชุดเงื่อนไข tags) ที่ชนะ/แพ้ซ้ำแบบชัดเจน (ไม่ใช่แค่ดวง) แล้วแปลงเป็น Rule ใหม่"""
     P, S = store.params, store.state
     stats = getattr(store, "inc_stats", None)          # MemStore (backtest) สะสมสถิติเองทีละนัด
     if stats is None:
@@ -3878,7 +3950,7 @@ def discipline_features(m):
 #   ชั้นที่ 1 (คำสั่ง Gemini): ทุกค่าต้องมีแหล่ง + วันที่ ไม่พบให้ null และระบุในรายการ missing
 #   ชั้นที่ 2 (โค้ดตรวจซ้ำ): แหล่งต้องตรงกับผลค้นหาจริงของ Google (grounding) ช่วงค่าต้องสมเหตุสมผล ข้อมูลต้องไม่เก่า
 #   ค่าที่ไม่ผ่าน = แสดงว่า "ไม่มีข้อมูล"/"ไม่ยืนยัน" และไม่ถูกนำไปคำนวณ
-#   Rule ที่ใช้ข้อมูลนี้ (R42-R46) เริ่มเป็นเงาเสมอ ไม่เปลี่ยนการฟันธงจนกว่าจะผ่านเกณฑ์นอกกลุ่มตัวอย่าง
+#   Rule ที่ใช้ข้อมูลนี้ (R42-R46) เริ่มเป็นเงาเสมอ ไม่เปลี่ยนการฟันธงจนกว่าจะผ่านเกณฑ์จากผลจริงหลังเริ่มทดลอง
 # ----------------------------------------------------------------------------
 TEAM_NEWS_PROMPT = """คุณคือผู้ช่วยค้นข้อมูลฟุตบอล ใช้ Google Search ค้นข้อมูลก่อนแข่งของคู่นี้:
 เจ้าบ้าน: @HOME@
