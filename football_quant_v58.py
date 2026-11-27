@@ -1776,6 +1776,91 @@ def sword_track(history):
     return out
 
 
+# ---- v6.0 (ทดลองคู่ขนาน): Rule ใช้ "คัดนัด" ส่วนฝั่งเอียงไปทางต่ำ/ทีมรอง ----
+# ที่มา: 1,020 นัด (5-28 พ.ย.) ไม้ต่ำ/ทีมรองที่ระบบเลือก +39.7 หน่วย แต่ไม้สูง/ทีมต่อ -42.0 (ซ้ำทั้งครึ่งแรกและครึ่งหลัง)
+# ยังไม่ใช้กับเงินจริง: เก็บผลหลัง V6_FROM เทียบกับ v5.8 ครบ V6_TEST_N ไม้แล้วให้ผู้ใช้ตัดสินใจสลับ
+V6_FROM = "2026-11-28 05:15"
+V6_TEST_N = 150
+_PAIR_MK = {"HDP_HOME": "HDP_AWAY", "HDP_AWAY": "HDP_HOME", "OU_OVER": "OU_UNDER", "OU_UNDER": "OU_OVER"}
+SIDE_TH = {"FAV": "ทีมต่อ", "DOG": "ทีมรอง", "OVER": "สูง", "UNDER": "ต่ำ"}
+
+
+def side_of(f, mk):
+    """FAV / DOG / OVER / UNDER ของตลาดที่เลือก"""
+    mk = str(mk).replace("X12_", "HDP_")
+    if mk == "OU_OVER":
+        return "OVER"
+    if mk == "OU_UNDER":
+        return "UNDER"
+    if mk.startswith("HDP") and f.get("fav_hdp"):
+        return "FAV" if mk == f["fav_hdp"] else "DOG"
+    return None
+
+
+def v6_decide(f, pick):
+    """การตัดสินใจของ v6: ต่ำ/ทีมรอง = แทงตาม · สูง/ทีมต่อ = (ก) ข้าม หรือ (ข) กลับไปอีกฝั่ง
+    ไม้ที่ราคาผิดปกติร้ายแรง = ข้ามเหมือน v5.8"""
+    mk = str(pick.get("market", "")).replace("X12_", "HDP_")
+    sd = side_of(f, mk)
+    if sd is None or any("ผิดปกติร้ายแรง" in x for x in pick.get("skip_reasons") or []):
+        return {"mode": "skip", "side": sd, "market": None}
+    if sd in ("DOG", "UNDER"):
+        return {"mode": "keep", "side": sd, "market": mk}
+    opp = _PAIR_MK[mk]
+    try:
+        price, label = pick_label(None, f, opp)
+    except Exception:  # noqa
+        price, label = None, opp
+    return {"mode": "flip", "side": sd, "market": opp, "flip_label": label, "flip_price": price}
+
+
+def side_record(history):
+    """ผลที่ผ่านมาของไม้แต่ละฝั่ง (นับทุกไม้ที่ระบบเลือก รวมไม้ข้าม/กระดาษ) ใช้แทน "ความมั่นใจ" แบบเดิม"""
+    acc = {k: [] for k in SIDE_TH}
+    for r in history:
+        if r.get("status") != "settled" or not r.get("score"):
+            continue
+        mk = r["pick"].get("market", "")
+        sd = side_of(r["features"], mk)
+        if sd is None or mk[:2] not in ("HD", "OU"):
+            continue
+        wm, wo = _mk_waters(r["features"], mk)
+        if wm and wo:
+            acc[sd].append((settle_all(r, *r["score"])[mk][1], r["pick"]["price_win"], wo))
+    return {k: _vs_noskill(v) for k, v in acc.items()}
+
+
+def v6_track(history):
+    """เทียบ v5.8 (ไม้เงินจริงที่ไม่ข้าม/ไม่ใช่กระดาษ) กับ v6 ทั้งสองแบบ
+    fwd = หลัง V6_FROM (ทดสอบจริง) · all = ย้อนหลังทั้งหมด (ข้อมูลชุดที่ใช้คิด v6 จึงดูดีเกินจริง)"""
+    out = {}
+    for per in ("fwd", "all"):
+        v58, va, vb = [], [], []
+        for r in history:
+            if r.get("status") != "settled" or not r.get("score"):
+                continue
+            if per == "fwd" and str(r.get("created", "")) < V6_FROM:
+                continue
+            f, p = r["features"], r["pick"]
+            o = settle_all(r, *r["score"])
+            mk = p.get("market", "")
+            if mk[:2] in ("HD", "OU") and not p.get("skip") and not r.get("paper"):
+                wm, wo = _mk_waters(f, mk)
+                if wm and wo:
+                    v58.append((o[mk][1], p["price_win"], wo))
+            d = p.get("v6") or v6_decide(f, p)
+            if d["mode"] in ("keep", "flip") and d["market"] in o:
+                wm, wo = _mk_waters(f, d["market"])
+                if wm and wo:
+                    x = (o[d["market"]][1], wm, wo)
+                    vb.append(x)
+                    if d["mode"] == "keep":
+                        va.append(x)
+        out[per] = {"v58": _vs_noskill(v58), "v6a": _vs_noskill(va), "v6b": _vs_noskill(vb)}
+    out["need"] = V6_TEST_N
+    return out
+
+
 NEGBAND_TEST_N = 120     # ป้ายช่วงคะแนนติดลบ: ทดสอบให้ครบกี่ไม้ก่อนตัดสิน
 
 
@@ -2166,6 +2251,83 @@ def _sheets_call(payload):
     return out
 
 
+# ---- v6: ซิงก์ Google Sheets เฉพาะนัดที่เปลี่ยน (เดิมส่งประวัติทั้งก้อน ~11 MB ทุกครั้งที่บันทึก) ----
+_SYNC = {"v2": None, "hashes": None}          # v2: None = ยังไม่รู้ว่าสคริปต์รองรับ, hashes: {id: hash} ของที่อยู่บนคลาวด์
+SYNC_BATCH_BYTES = 3_000_000                   # ส่งทีละไม่เกิน ~3 MB ต่อครั้ง
+SYNC_RESET_FRAC = 0.5                          # เปลี่ยนเกินครึ่ง -> เขียนใหม่ทั้งหมด
+
+
+def _norm_num(x):
+    """ทำให้ตัวเลขเทียบกันได้หลังผ่าน JavaScript (1.0 กลายเป็น 1, tuple กลายเป็น list)"""
+    if isinstance(x, float):
+        return int(x) if x.is_integer() else x
+    if isinstance(x, dict):
+        return {k: _norm_num(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_norm_num(v) for v in x]
+    return x
+
+
+def _rec_hash(r):
+    import hashlib
+    return hashlib.md5(json.dumps(_norm_num(r), sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+
+
+def _sync_baseline(history, v2):
+    if v2:
+        _SYNC["v2"] = True
+    _SYNC["hashes"] = {str(r.get("id")): _rec_hash(r) for r in (history or []) if isinstance(r, dict)} if v2 else None
+
+
+def _push_v2(state, history):
+    """คืน True ถ้าซิงก์แบบใหม่สำเร็จ · False ถ้าสคริปต์บนชีตยังเป็นรุ่นเก่า (ให้ใช้วิธีเดิม)"""
+    cur = {}
+    for r in history:
+        cur[str(r.get("id"))] = (r, _rec_hash(r))
+    base = _SYNC["hashes"]
+    reset = base is None
+    if not reset:
+        dirty = [k for k, (_, h) in cur.items() if base.get(k) != h]
+        if len(dirty) > max(50, SYNC_RESET_FRAC * len(cur)):
+            reset = True
+    order = list(cur.keys())
+    send = order if reset else [k for k in order if base.get(k) != cur[k][1]]
+    dels = [] if reset else [k for k in base if k not in cur]
+    batches, b, sz = [], [], 0
+    for k in send:
+        t = json.dumps(cur[k][0], ensure_ascii=False, default=str)
+        if b and sz + len(t) > SYNC_BATCH_BYTES:
+            batches.append(b)
+            b, sz = [], 0
+        b.append([k, t])
+        sz += len(t)
+    if b or not batches:
+        batches.append(b)
+    views = sheet_views(state, history)
+    count = None
+    for i, bt in enumerate(batches):
+        payload = {"action": "push2", "upsert": bt, "reset": reset and i == 0}
+        if i == 0:
+            payload.update(state=state, views=views, **({"del": dels} if dels else {}))
+        try:
+            out = _sheets_call(payload)
+        except RuntimeError as e:
+            if "unknown action" in str(e):
+                _SYNC["v2"] = False
+                return False
+            _SYNC["hashes"] = None                     # ไม่แน่ใจว่าบนคลาวด์มีอะไร -> ครั้งหน้าเขียนใหม่ทั้งหมด
+            raise
+        count = out.get("count")
+    _SYNC["v2"] = True
+    if count is not None and count != len(cur):        # จำนวนแถวไม่ตรง (เช่น เพิ่งอัปเดตสคริปต์) -> เขียนใหม่ทั้งหมดทันที
+        if not reset:
+            _SYNC["hashes"] = None
+            return _push_v2(state, history)
+        raise RuntimeError(f"Google Sheets: จำนวนนัดบนชีต ({count}) ไม่ตรงกับในเครื่อง ({len(cur)})")
+    _SYNC["hashes"] = {k: h for k, (_, h) in cur.items()}
+    return True
+
+
 def remote_pull():
     """ดึง state/history จากที่เก็บถาวร คืน dict {ชื่อไฟล์: ข้อมูล} หรือ None ถ้าไม่ได้ตั้งค่า/ล้มเหลว"""
     be = remote_backend()
@@ -2178,6 +2340,7 @@ def remote_pull():
     try:
         out = _sheets_call({"action": "pull"})
         REMOTE_STATE.update(ok=True, error=None, last=now_th("%H:%M:%S"))
+        _sync_baseline(out.get("history"), out.get("v") == 2)
         return {"state.json": out.get("state"), "history.json": out.get("history")}
     except Exception as e:  # noqa
         REMOTE_STATE.update(ok=False, error=_remote_err(e))
@@ -2195,6 +2358,9 @@ def remote_push(state, history):
     if be == "gist":
         return _gist_push(state, history)
     try:
+        if _SYNC["v2"] is not False and _push_v2(state, history):
+            REMOTE_STATE.update(ok=True, error=None, last=now_th("%H:%M:%S"))
+            return True
         _sheets_call({"action": "push", "state": state, "history": history, "views": sheet_views(state, history)})
         REMOTE_STATE.update(ok=True, error=None, last=now_th("%H:%M:%S"))
         return True
@@ -2314,6 +2480,16 @@ def analyze_match(m, store):
                               {"n": gt[g]["all"]["n"], "w": gt[g]["all"]["w"], "l": gt[g]["all"]["l"],
                                "profit": round(gt[g]["all"]["profit"], 2), "z": round(gt[g]["all"]["z"], 2),
                                "fwd_n": gt[g]["fwd"]["n"]} for g in hits if gt[g]["status"] != "drop"]
+    except Exception:  # noqa
+        pass
+    try:
+        pick["v6"] = v6_decide(f, pick)
+        sr = side_record(store.history)
+        sd = side_of(f, pick.get("market", ""))
+        if sd:
+            x = sr[sd]
+            pick["side_rec"] = {"side": sd, "side_th": SIDE_TH[sd], "n": x["n"], "w": x["w"], "l": x["l"],
+                                "profit": round(x["profit"], 2), "z": round(x["z"], 2)}
     except Exception:  # noqa
         pass
     try:
@@ -2711,6 +2887,11 @@ def render_report(m, f, contribs, pick, store):
                 L.append(f"  โอกาสสูง/ต่ำ {cp['ou']['line']:g}: สูง {cp['ou']['over']['get']:.0%} · ต่ำ {cp['ou']['under']['get']:.0%}"
                          + (f" · คืนทุน {cp['ou']['over']['push']:.0%}" if cp["ou"]["over"]["push"] >= .005 else ""))
     g = pick.get("gate")
+    v6 = pick.get("v6") or {}
+    if v6.get("mode") == "flip":
+        L.append(f"\n[v6 ทดลองคู่ขนาน] ไม้นี้เป็นฝั่ง{SIDE_TH.get(v6.get('side'), '')} · v6 จะข้าม หรือกลับไปแทง {v6.get('flip_label')}")
+    elif v6.get("mode") == "keep":
+        L.append(f"\n[v6 ทดลองคู่ขนาน] เห็นด้วยกับไม้นี้ (ฝั่ง{SIDE_TH.get(v6.get('side'), '')})")
     for sd in pick.get("swords") or []:
         L.append(f"\n✓ ดาบ {sd['id']}: {sd['name']} · ที่ผ่านมา {sd['w']}-{sd['l']} {sd['profit']:+.2f} หน่วย · {sd['why']}")
     for gd in pick.get("guards") or []:
