@@ -267,14 +267,31 @@ def _hero(m, f, pick, res=None):
                       f'<b>{e(f["away"])} {aa["get"]:.0%}</b>{_hf(aa)}' + (f' · เสมอเงินคืน {hh["push"]:.0%}' if hh["push"] >= .005 else "") + "</div>")
         extra += (f'<div class="sc">คาดว่าเหย้ายิง {sm["lh"]:.2f} เยือนยิง {sm["la"]:.2f} ลูก · สกอร์ที่น่าจะเป็น '
                   + " · ".join(f"{h}-{a} ({p:.0%})" for h, a, p in sm["top"][:3]) + "</div>")
+    # v6.0: "ความมั่นใจ" = ผลจริงที่ผ่านมาของไม้ฝั่งเดียวกัน (แทนระดับจากคะแนนรวม ซึ่งไม่สัมพันธ์กับผล)
+    sr = pick.get("side_rec")
+    if sr and sr.get("n"):
+        side_stat = (f'<div class="s-statline"{tipattr("ทุกไม้ที่ระบบเคยเลือกฝั่งนี้ (รวมไม้ข้าม/กระดาษ) · ใช้แทนระดับความมั่นใจแบบเก่า")}>'
+                     f'<div class="v {"s-up" if sr["profit"] > 0 else "s-down"}">{sr["profit"]:+.1f}</div>'
+                     f'<div class="t">ไม้{e(sr["side_th"])}ที่ผ่านมา {sr["w"]}-{sr["l"]}</div></div>')
+    else:
+        side_stat = (f'<div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
+                     f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ความมั่นใจ</div></div></div>')
+    v6 = pick.get("v6") or {}
+    v6_box = ""
+    if v6.get("mode") == "flip":
+        v6_box = (f'<div class="s-al v6"><div class="h">v6.0 (ทดลองคู่ขนาน · ยังไม่ใช้เงินจริง)</div>'
+                  f'<div class="d">ไม้นี้เป็นฝั่ง{e(q.SIDE_TH.get(v6.get("side"), ""))} ซึ่งที่ผ่านมาขาดทุน · v6 จะ<b>ข้าม</b> '
+                  f'หรือ<b>กลับไปแทง {e(v6.get("flip_label") or "")}</b></div></div>')
+    elif v6.get("mode") == "keep":
+        v6_box = (f'<div class="s-al v6"><div class="h">v6.0 (ทดลองคู่ขนาน)</div>'
+                  f'<div class="d">เห็นด้วยกับไม้นี้ · ฝั่ง{e(q.SIDE_TH.get(v6.get("side"), ""))} เป็นฝั่งที่ทำกำไรมา</div></div>')
     pk = (f'<div class="s-pick {cls} s-rv" style="--dl:.25s"><div class="k">{"ข้ามไม้นี้ · เก็บผลไว้ดูเฉยๆ" if skip else "ไม้ที่ระบบเลือก · ราคาตอนนี้"}</div>'
           f'<div class="lb">{e(pick["label"])}</div>'
-          f'<div class="row"><div style="display:flex;align-items:flex-end;gap:10px"><div class="s-lvl">{lvl}</div>'
-          f'<div class="s-statline"><div class="v">{e(tier)}</div><div class="t">ความมั่นใจ</div></div></div>{stats}</div>'
-          f'{neg_band}{_alert_box(*alerts(res), grn=_sword_items(pick)) if res else ""}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
+          f'<div class="row">{side_stat}{stats}</div>'
+          f'{v6_box}{neg_band}{_alert_box(*alerts(res), grn=_sword_items(pick)) if res else ""}{("<div class=s-chips style=margin-top:12px>" + "".join(chip(t, k) for t, k in flags) + "</div>") if flags else ""}{best}{extra}</div>')
     return (f'<div class="s-hero s-rv"><div class="comp">{e(comp)}</div><div class="s-vs">{team("home")}<div class="s-vsx">VS</div>{team("away")}</div>'
-            f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ความมั่นใจดูจากคะแนนรวมของ Rule (ต่ำ &lt; 1.2 ≤ กลาง &lt; 2.5 ≤ สูง) '
-            f'ไม่ใช่โอกาสชนะ · เลื่อนลงดูว่าระบบคิดยังไงทีละขั้น</div></div>')
+            f'{pk}<div class="s-xs s-mut" style="text-align:center;margin-top:10px">ตัวเลขใหญ่ซ้าย = กำไรรวมของไม้ฝั่งเดียวกันที่ผ่านมา (ไม่ใช่โอกาสชนะ) · '
+            f'เลื่อนลงดูว่าระบบคิดยังไงทีละขั้น</div></div>')
 
 
 # ---------------------------------------------------------------------------- บท: สกอร์ที่คาด
