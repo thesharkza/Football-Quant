@@ -1717,6 +1717,65 @@ def guard_track(history):
     return out
 
 
+# ---- ดาบ (จุดแข็ง: จากการวิเคราะห์ไม้ที่ชนะ 28 พ.ย. 2026 · หาจาก 60% แรก แล้วตรวจซ้ำกับ 40% หลัง) ----
+# แสดงเป็นป้ายสีเขียวช่วยเพิ่มความมั่นใจ ไม่เปลี่ยนไม้/ไม่เพิ่มเงิน (แทงเท่ากันทุกไม้)
+# ติดตามผลหลังวันที่สร้าง ครบ SWORD_TEST_N ไม้และ z >= +2 = เสนอทำเป็น Rule จริง (ต้องอนุมัติ) · ครบแล้วไม่ถึง = เลิกแสดง
+SWORD_FROM = "2026-11-28 01:30"
+SWORD_TEST_N = 60
+SWORDS = {
+    "S1": {"name": "แทงต่ำ (Under)",
+           "why": "คนส่วนใหญ่ชอบเล่นสูง ราคาฝั่งต่ำเลยมักคุ้มกว่า"},
+    "S2": {"name": "แทงทีมรองที่ค่าน้ำลดลง",
+           "why": "ค่าน้ำทีมรองลดลง = มีเงินไหลเข้าทีมรอง และระบบเลือกฝั่งเดียวกับเงิน"},
+    "S3": {"name": "แทงทีมรองในบอลถ้วย",
+           "why": "บอลถ้วยทีมต่อมักหมุนตัว/ไม่เต็มที่ ทีมรองเลยได้เปรียบกว่าที่ราคาบอก"},
+}
+
+
+def sword_hits(f, pick):
+    mk = pick.get("market", "")
+    tags = set(f.get("tags") or [])
+    out = []
+    if mk == "OU_UNDER":
+        out.append("S1")
+    if mk.startswith("HDP") and f.get("fav_hdp") and mk != f.get("fav_hdp"):
+        if "water:dog_drop" in tags:
+            out.append("S2")
+        if f.get("ctx_type") == "cup" or f.get("continental") or "ctx:cup" in tags or "continental" in tags:
+            out.append("S3")
+    return out
+
+
+def sword_track(history):
+    """ผลของไม้ที่ดาบแต่ละข้อทำงาน: ทั้งหมด และหลังวันที่สร้าง"""
+    acc = {g: {"all": [], "fwd": []} for g in SWORDS}
+    for r in history:
+        if r.get("status") != "settled" or not r.get("score"):
+            continue
+        p = r["pick"]
+        mk = p.get("market", "")
+        if mk[:2] not in ("HD", "OU"):
+            continue
+        hits = sword_hits(r["features"], p)
+        if not hits:
+            continue
+        wm, wo = _mk_waters(r["features"], mk)
+        if not wm or not wo:
+            continue
+        it = (settle_all(r, *r["score"])[mk][1], p["price_win"], wo)
+        for g in hits:
+            acc[g]["all"].append(it)
+            if str(r.get("created", "")) >= SWORD_FROM:
+                acc[g]["fwd"].append(it)
+    out = {}
+    for g, d in acc.items():
+        a, fw = _vs_noskill(d["all"]), _vs_noskill(d["fwd"])
+        st_ = "propose_rule" if fw["n"] >= SWORD_TEST_N and fw["z"] >= 2 else \
+            "drop" if fw["n"] >= SWORD_TEST_N else "testing"
+        out[g] = {**SWORDS[g], "id": g, "all": a, "fwd": fw, "status": st_}
+    return out
+
+
 NEGBAND_TEST_N = 120     # ป้ายช่วงคะแนนติดลบ: ทดสอบให้ครบกี่ไม้ก่อนตัดสิน
 
 
@@ -2257,6 +2316,16 @@ def analyze_match(m, store):
                                "fwd_n": gt[g]["fwd"]["n"]} for g in hits if gt[g]["status"] != "drop"]
     except Exception:  # noqa
         pass
+    try:
+        hits = sword_hits(f, pick)
+        if hits:
+            stt = sword_track(store.history)
+            pick["swords"] = [{k: stt[g][k] for k in ("id", "name", "why", "status")} |
+                              {"n": stt[g]["all"]["n"], "w": stt[g]["all"]["w"], "l": stt[g]["all"]["l"],
+                               "profit": round(stt[g]["all"]["profit"], 2), "z": round(stt[g]["all"]["z"], 2)}
+                              for g in hits if stt[g]["status"] != "drop"]
+    except Exception:  # noqa
+        pass
     if pick.get("gate"):
         try:
             nb = negband_status(store.history)
@@ -2642,6 +2711,8 @@ def render_report(m, f, contribs, pick, store):
                 L.append(f"  โอกาสสูง/ต่ำ {cp['ou']['line']:g}: สูง {cp['ou']['over']['get']:.0%} · ต่ำ {cp['ou']['under']['get']:.0%}"
                          + (f" · คืนทุน {cp['ou']['over']['push']:.0%}" if cp["ou"]["over"]["push"] >= .005 else ""))
     g = pick.get("gate")
+    for sd in pick.get("swords") or []:
+        L.append(f"\n✓ ดาบ {sd['id']}: {sd['name']} · ที่ผ่านมา {sd['w']}-{sd['l']} {sd['profit']:+.2f} หน่วย · {sd['why']}")
     for gd in pick.get("guards") or []:
         L.append(f"\n⚠ เกาะป้องกัน {gd['id']}: {gd['name']} · ที่ผ่านมา {gd['w']}-{gd['l']} {gd['profit']:+.2f} หน่วย (z {gd['z']:+.2f}) · {gd['why']}")
     if g:
