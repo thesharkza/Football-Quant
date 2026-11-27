@@ -3536,7 +3536,7 @@ def sanity_checks(m):
                 if ovr < 0.98 or ovr > 1.20:
                     crit.append(f"{nm} 1X2 {tn}: ผลรวมโอกาส {ovr:.0%} ผิดปกติ (ปกติ 100-115%) อาจอ่านราคาผิด/สลับคอลัมน์")
                 elif ovr > 1.12:
-                    warn.append(f"{nm} 1X2 {tn}: ค่าคอมมิชชันสูง ({ovr - 1:.0%})")
+                    warn.append(f"{nm} 1X2 {tn}: ค่าต๋งสูง ({ovr - 1:.0%}) ราคาเจ้านี้อาจอ่านผิด")
             h = (b.get("hdp") or {}).get(t)
             if isinstance(h, dict) and all(_num(h.get(k)) for k in ("line", "home_water", "away_water")):
                 hw, aw = h["home_water"], h["away_water"]
@@ -3545,7 +3545,7 @@ def sanity_checks(m):
                 if sm < 1.6 or sm > 2.2:
                     crit.append(f"{nm} แฮนดิแคป {tn}: ค่าน้ำรวม {sm:.2f} ผิดปกติ (ปกติ ~1.80-2.05)")
                 elif sm < 1.72 or sm > 2.08:
-                    warn.append(f"{nm} แฮนดิแคป {tn}: ค่าน้ำรวม {sm:.2f} ค่อนข้างผิดปกติ")
+                    warn.append(f"{nm} แฮนดิแคป {tn}: ค่าน้ำรวม {sm:.2f} ดูแปลกๆ (ปกติราว 1.80-2.05)")
                 if isinstance(x, list) and len(x) == 3 and all(_num(v) for v in x) and abs(h["line"]) >= 0.5:
                     fav_x = "home" if x[0] < x[2] else "away"
                     fav_h = "home" if h["line"] < 0 else "away"
@@ -4309,9 +4309,9 @@ def validate_match(m):
         m["stats"]["venue"] = True                   # สถิติแยกเหย้า/เยือนจากการค้นหา
     m["h2h"] = [e for e in (m.get("h2h") or []) if _num(e.get("hg")) and _num(e.get("ag"))][:5]
     if not m["h2h"]:
-        w.append("ไม่พบข้อมูล H2H ใน 5 รูป (Rule 5 จะไม่ทำงาน)")
+        w.append("ไม่พบผลที่เคยเจอกัน (H2H) ในรูป · Rule 5 เลยไม่ทำงาน")
     if not m["stats"]:
-        w.append("ไม่พบสถิติประตูได้/เสีย (Rule 3, 8 จะไม่ทำงาน)")
+        w.append("ไม่พบสถิติยิง/เสียประตูในรูป · Rule 3, 8 เลยไม่ทำงาน")
     m["context"] = {**{"type": "league"}, **{k: v for k, v in (m.get("context") or {}).items() if v is not None}}
     m["home"], m["away"] = m.get("home") or "Home", m.get("away") or "Away"
     # Home/Away Verification: ยืนยันสิทธิ์เจ้าบ้านของแต่ละนัด H2H จากชื่อทีม (ถ้ามีชื่อ)
@@ -4335,7 +4335,7 @@ def validate_match(m):
     m["h2h_names_checked"], m["h2h_names_bad"] = chk, bad
     m["rank"] = {k: v for k, v in (m.get("rank") or {}).items() if _num(v)}
     if not m["rank"]:
-        w.append("ไม่พบอันดับตาราง (Rule 18, 19, 23 จะไม่ทำงาน)")
+        w.append("ไม่พบอันดับตารางในรูป · Rule 18, 19, 23 เลยไม่ทำงาน")
     m["warnings"] = w
     return m, w
 
