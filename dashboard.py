@@ -529,7 +529,7 @@ def stats_dashboard(state, history):
     wr = w / (w + l) if (w + l) else 0
     roi = pr / len(done) if done else 0.0
     kp = []
-    kp.append(_card("อัตราชนะ (ไม่นับเจ๊า)", f'<div class="fq-donut" style="--p:{wr * 100:.0f};--c:{"#3ddc97" if wr >= .5 else "#ff6b6b"}"><div>{wr:.0%}<small>{w}ช / {l}พ</small></div></div>', "fq-c3 fq-m6 fq-kpi"))
+    kp.append(_card("อัตราชนะ (ไม่นับเสมอ)", f'<div class="fq-donut" style="--p:{wr * 100:.0f};--c:{"#3ddc97" if wr >= .5 else "#ff6b6b"}"><div>{wr:.0%}<small>{w}ช / {l}พ</small></div></div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("กำไรสุทธิ (หน่วย)", f'<div class="num {"fq-up" if pr >= 0 else "fq-down"}">{pr:+.2f}</div><div class="fq-small fq-mut">ROI {roi:+.1%} ต่อไม้</div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("บันทึกผลแล้ว", f'<div class="num">{len(done)}</div><div class="fq-small fq-mut">ชนะ {w} · เจ๊า {p} · แพ้ {l}</div>', "fq-c3 fq-m6 fq-kpi"))
     kp.append(_card("รอผล", f'<div class="num">{len(pend)}</div><div class="fq-small fq-mut">สัญญาณที่ยังไม่จบเกม</div>', "fq-c3 fq-m6 fq-kpi"))
@@ -694,8 +694,8 @@ def score_ladder(history, breakeven=0.525):
         sp = _spearman(recs)
         if sp:
             rho, z = sp
-            trend = ("คะแนนสูงชนะมากกว่า" if rho > 0 else "คะแนนสูงชนะน้อยกว่า") + (" (มีนัยสำคัญ)" if abs(z) >= 1.96 else " (ยังไม่มีนัยสำคัญ)")
-            body += f'<div class="fq-small fq-mut" style="margin-top:8px">ความสัมพันธ์คะแนน↔ชนะ (Spearman) {rho:+.2f} · z ≈ {z:+.1f} · {trend}</div>'
+            trend = ("คะแนนสูงชนะมากกว่า" if rho > 0 else "คะแนนสูงชนะน้อยกว่า") + (" (ชัดเจน)" if abs(z) >= 1.96 else " (ยังไม่มีนัยสำคัญ)")
+            body += f'<div class="fq-small fq-mut" style="margin-top:8px">คะแนนสูงแล้วชนะบ่อยขึ้นจริงไหม {rho:+.2f} · z ≈ {z:+.1f} · {trend}</div>'
         return head + body
 
     nb = 5 if len(done) >= 75 else 3
@@ -717,7 +717,7 @@ def score_ladder(history, breakeven=0.525):
     return "".join(out)
 
 
-# ------------------------------------------------------------------ สถานะ Rule ผู้สมัคร (เงา / ใช้งาน / ถอด)
+# ------------------------------------------------------------------ สถานะ Rule ที่กำลังทดลอง (เงา / ใช้งาน / ถอด)
 def rule_lifecycle(state, params):
     life = state.get("lifecycle") or {}
     learned = {r["id"]: r for r in state.get("learned_rules", [])}
@@ -725,17 +725,17 @@ def rule_lifecycle(state, params):
     for rid, e in life.items():
         dec = e["w"] + e["l"]
         rows.append((rid, e, dec, e["w"] / dec if dec else 0.0))
-    for rid in learned:                          # Rule ที่ยังไม่เคยมีผลนอกกลุ่มตัวอย่าง
+    for rid in learned:                          # Rule ที่ยังไม่เคยมีผลจริงหลังเริ่มทดลอง
         if rid not in life:
-            rows.append((rid, {"kind": "learned", "status": "shadow", "n": 0, "w": 0, "l": 0, "reason": "ยังไม่มีผลนอกกลุ่มตัวอย่าง"}, 0, 0.0))
+            rows.append((rid, {"kind": "learned", "status": "shadow", "n": 0, "w": 0, "l": 0, "reason": "ยังไม่มีผลจริงหลังเริ่มทดลอง"}, 0, 0.0))
     if not rows:
-        return '<div class="fq"><div class="fq-empty">ยังไม่มี Rule ผู้สมัคร</div></div>'
+        return '<div class="fq"><div class="fq-empty">ยังไม่มี Rule ที่กำลังทดลอง</div></div>'
     order = {"active": 0, "shadow": 1, "retired": 2}
     rows.sort(key=lambda x: (order.get(x[1]["status"], 3), -x[1]["n"]))
     cnt = {k: sum(1 for x in rows if x[1]["status"] == k) for k in order}
     lab = {"active": ("ใช้งาน", "ok"), "shadow": ("เงา (ระงับ)", "off"), "retired": ("ถอดแล้ว", "bad")}
     head = ('<div class="fq-row head" style="grid-template-columns:.7fr 2.4fr .9fr 1.4fr"><span>Rule</span><span>เงื่อนไข / เหตุผลสถานะ</span>'
-            '<span>สถานะ</span><span>ผลนอกกลุ่มตัวอย่าง</span></div>')
+            '<span>สถานะ</span><span>ผลจริงหลังเริ่มทดลอง</span></div>')
     body = ""
     for rid, e, dec, wr in rows[:40]:
         if e["kind"] == "learned" and rid in learned:
@@ -751,10 +751,10 @@ def rule_lifecycle(state, params):
                  f'<span>{_chip(t, kd)}</span><span class="fq-small">{prog}</span></div>')
     rules = (f'<div class="fq-small fq-mut" style="margin-bottom:8px">ทุก Rule ใหม่ (ที่ระบบสร้าง และ R28–R40 จากเอกสาร และ R42–R46 จากข้อมูลทีม) เริ่มเป็น <b>เงา</b>: '
              f'ติดตามผลเบื้องหลังโดยไม่มีผลต่อการฟันธง · <b>ปลดล็อค</b> เมื่อชนะ ≥ {params["unlock_wr"]:.0%} จาก ≥ {params["unlock_min_n"]} ครั้ง '
-             f'(และสูงกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ) หรือครบ {params["judge_n"]} ครั้งแล้วผ่านเกณฑ์ · <b>ถอด</b> เมื่อครบ {params["judge_n"]} ครั้งไม่ผ่าน, '
-             f'ต่ำกว่าจุดคุ้มทุนอย่างมีนัยสำคัญ หรืออัตราชนะลดลงต่อเนื่อง 3 ช่วง</div>')
+             f'(และสูงกว่าจุดคุ้มทุนแบบชัดเจน (ไม่ใช่แค่ดวง)) หรือครบ {params["judge_n"]} ครั้งแล้วผ่านเกณฑ์ · <b>ถอด</b> เมื่อครบ {params["judge_n"]} ครั้งไม่ผ่าน, '
+             f'ต่ำกว่าจุดคุ้มทุนแบบชัดเจน (ไม่ใช่แค่ดวง) หรืออัตราชนะลดลงต่อเนื่อง 3 ช่วง</div>')
     tag = " ".join(_chip("{} {}".format(t_, cnt[k_]), c_) for k_, t_, c_ in (("active", "ใช้งาน", "ok"), ("shadow", "เงา", "off"), ("retired", "ถอด", "bad")))
-    return '<div class="fq">' + _card("สถานะ Rule ผู้สมัคร", rules + head + body, "", tag) + '</div>'
+    return '<div class="fq">' + _card("สถานะ Rule ที่กำลังทดลอง", rules + head + body, "", tag) + '</div>'
 
 
 def e_(x):
