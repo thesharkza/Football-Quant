@@ -204,12 +204,12 @@ def kpi_and_match(res):
         bst = pick.get("best")
         best_html = (f'<div class="fq-best">ราคาดีที่สุด: <b>{e(bst["book"])} @{bst["price"]:.2f}</b> '
                      f'(ดีกว่าราคามัธยฐาน +{bst["gain"]:.2f} · จุดคุ้มทุน {bst["breakeven"]:.1%} จาก {bst["breakeven_median"]:.1%})</div>') if bst else ""
-        c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero{" low" if low else ""}"><div class="fq-h"><span>สัญญาณฟันธงเดี่ยว</span>'
+        c1 = (f'<div class="fq-card fq-c5 fq-kpi fq-hero{" low" if low else ""}"><div class="fq-h"><span>ไม้ที่ระบบเลือก</span>'
               f'<span class="fq-chip off">ใช้ราคาปัจจุบัน</span></div><div><div class="big">{e(pick["label"])}</div>'
               f'<div class="fq-chips">{"".join(chips)}</div>{best_html}{runner}</div></div>')
     lv = {"ต่ำ": 1, "กลาง": 2, "สูง": 3}.get(pick["tier"], 1)
     bars = "".join(f'<i style="height:{14 + 10 * i}px;background:{"#2dd4bf" if i < lv else "rgba(255,255,255,.12)"}"></i>' for i in range(3))
-    c2 = _card("ระดับสัญญาณ",
+    c2 = _card("ความมั่นใจ",
                f'<div style="display:flex;align-items:flex-end;gap:14px"><div class="fq-lvl">{bars}</div>'
                f'<div><div class="num">{e(pick["tier"])}</div><div class="fq-small fq-mut">จัดระดับจากคะแนน · ไม่ใช่โอกาสชนะ</div></div></div>',
                "fq-c3 fq-m6 fq-kpi")
