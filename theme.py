@@ -178,6 +178,8 @@ STORY_CSS = """
 .s-al { padding:8px 12px; border-radius:12px; border:1px solid; }
 .s-al.red { background:var(--neg-tint); border-color:rgba(255,107,107,0.35); }
 .s-al.yel { background:var(--warn-tint); border-color:rgba(245,185,66,0.35); }
+.s-al.grn { background:var(--pos-tint, rgba(61,220,151,0.10)); border-color:rgba(61,220,151,0.35); }
+.s-al.grn .h, .s-al.grn li { color:var(--pos); }
 .s-al .h { font-size:13px; line-height:20px; font-weight:600; }
 .s-al.red .h, .s-al.red li { color:var(--neg); }
 .s-al.yel .h, .s-al.yel li { color:var(--warn); }
