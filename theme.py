@@ -180,6 +180,10 @@ STORY_CSS = """
 .s-al.yel { background:var(--warn-tint); border-color:rgba(245,185,66,0.35); }
 .s-al.grn { background:var(--pos-tint, rgba(61,220,151,0.10)); border-color:rgba(61,220,151,0.35); }
 .s-al.grn .h, .s-al.grn li { color:var(--pos); }
+.s-al.v6 { margin-top:12px; background:rgba(45,212,191,0.08); border-color:rgba(45,212,191,0.35); text-align:left; }
+.s-al.v6 .h { color:var(--accent); }
+.s-al.v6 .d { font-size:13px; line-height:20px; color:var(--text-2); }
+.s-al.v6 .d b { color:var(--text); }
 .s-al .h { font-size:13px; line-height:20px; font-weight:600; }
 .s-al.red .h, .s-al.red li { color:var(--neg); }
 .s-al.yel .h, .s-al.yel li { color:var(--warn); }
